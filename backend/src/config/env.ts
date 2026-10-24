@@ -13,6 +13,7 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     PORT: z.string().default('5000').transform(Number),
     FRONTEND_URL: z.string().default('http://localhost:3000'),
+    ALLOWED_ORIGINS: z.string().optional().default(''),
     AI_SERVICE_URL: z.string().default('http://localhost:8000'),
     MONGODB_URI: z.string().optional().default(''),
     JWT_SECRET: z.string().min(16).default(DEV_JWT_PLACEHOLDER),

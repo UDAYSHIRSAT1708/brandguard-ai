@@ -8,16 +8,81 @@ import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
 
-// Security Headers via Helmet
-app.use(helmet());
+/**
+ * Resolves the list of permitted CORS origins.
+ * Normalizes origins by trimming whitespace and removing trailing slashes.
+ */
+export function resolveAllowedOrigins(): string[] {
+  const allowed = new Set<string>();
 
-// CORS configuration - strict origin matching
-app.use(cors({
-  origin: [env.FRONTEND_URL, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+  // 1. Explicitly permit production frontend deployment
+  allowed.add('https://brandguard-ai-dafa.vercel.app');
+
+  // 2. Local development origins
+  allowed.add('http://localhost:3000');
+  allowed.add('http://127.0.0.1:3000');
+  allowed.add('http://localhost:5173');
+  allowed.add('http://127.0.0.1:5173');
+
+  // 3. FRONTEND_URL from environment (supports single or comma-separated list)
+  const frontendEnv = process.env.FRONTEND_URL || env.FRONTEND_URL;
+  if (frontendEnv) {
+    frontendEnv.split(',').forEach((url) => {
+      const clean = url.trim().replace(/\/+$/, '');
+      if (clean) allowed.add(clean);
+    });
+  }
+
+  // 4. ALLOWED_ORIGINS from environment (supports comma-separated list)
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || env.ALLOWED_ORIGINS;
+  if (allowedOriginsEnv) {
+    allowedOriginsEnv.split(',').forEach((url) => {
+      const clean = url.trim().replace(/\/+$/, '');
+      if (clean) allowed.add(clean);
+    });
+  }
+
+  return Array.from(allowed);
+}
+
+export const corsOptions: cors.CorsOptions = {
+  origin: (requestOrigin, callback) => {
+    // Non-browser or server-to-server requests (e.g. curl, health checks)
+    if (!requestOrigin) {
+      return callback(null, true);
+    }
+
+    const cleanOrigin = requestOrigin.trim().replace(/\/+$/, '');
+    const allowed = resolveAllowedOrigins();
+    if (allowed.includes(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed: pass false so cors does not attach Allow-Origin headers
+    return callback(null, false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Internal-API-Key'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Internal-API-Key',
+    'Accept',
+    'Origin',
+    'X-Requested-With',
+  ],
+  optionsSuccessStatus: 204,
+  maxAge: 86400, // 24 hours preflight cache
+};
+
+// Security Headers via Helmet - explicitly allow cross-origin resource consumption for web app
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+
+// CORS configuration - strict origin matching with preflight handling
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Request parsing with bounded body limits to prevent resource exhaustion attacks
 app.use(express.json({ limit: '10mb' }));
@@ -33,8 +98,8 @@ import { connectDB } from './config/db';
 
 // Database connection middleware for all incoming requests (crucial for Serverless / Vercel execution)
 app.use(async (req, res, next) => {
-  // Health check routes inspect connection status directly and format their own diagnostic response
-  if (req.path.startsWith('/api/health') || req.path === '/health') {
+  // Preflight OPTIONS requests and health checks do not depend on MongoDB query evaluation
+  if (req.method === 'OPTIONS' || req.path.startsWith('/api/health') || req.path === '/health') {
     return next();
   }
 
