@@ -28,4 +28,4 @@ const UserSchema = new Schema<IUser>(
 // Unique index: email is unique across the application for reliable single-identifier authentication
 UserSchema.index({ email: 1 }, { unique: true });
 
-export const User = mongoose.model<IUser>('User', UserSchema);
+export const User = (mongoose.models.User as mongoose.Model<IUser>) || mongoose.model<IUser>('User', UserSchema);

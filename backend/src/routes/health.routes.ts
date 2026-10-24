@@ -1,12 +1,35 @@
 import { Router, Request, Response } from 'express';
-import mongoose from 'mongoose';
 import axios from 'axios';
 import { env } from '../config/env';
+import { connectDB, getDatabaseStatus, getDatabaseDiagnostics } from '../config/db';
 
 const router = Router();
 
 router.get('/', async (req: Request, res: Response) => {
-  const dbConnected = mongoose.connection.readyState === 1;
+  // Ensure connection attempt has been evaluated for this request
+  let dbStatus = getDatabaseStatus();
+  if (dbStatus.status === 'disconnected') {
+    try {
+      await connectDB();
+    } catch {
+      // Connect error is captured in internal cache
+    }
+    dbStatus = getDatabaseStatus();
+  }
+
+  const dbConnected = dbStatus.status === 'connected';
+
+  // Keep sanitized diagnostic details strictly in server logs, never exposed to public API
+  if (!dbConnected) {
+    const diag = getDatabaseDiagnostics();
+    console.warn('[HEALTH CHECK] Database is not connected:', {
+      status: diag.status,
+      readyState: diag.readyState,
+      errorName: diag.lastError?.name,
+      errorCode: diag.lastError?.code,
+      errorMessage: diag.lastError?.message,
+    });
+  }
 
   let aiServiceStatus = 'unreachable';
   let aiServiceDetails = null;
@@ -18,7 +41,7 @@ router.get('/', async (req: Request, res: Response) => {
     });
     aiServiceStatus = aiResponse.data.status || 'healthy';
     aiServiceDetails = aiResponse.data;
-  } catch (err: any) {
+  } catch {
     aiServiceStatus = 'offline';
   }
 
@@ -32,10 +55,8 @@ router.get('/', async (req: Request, res: Response) => {
     environment: env.NODE_ENV,
     checks: {
       database: {
-        status: dbConnected ? 'connected' : 'disconnected',
-        readyState: mongoose.connection.readyState,
-        name: mongoose.connection.name,
-        host: mongoose.connection.host,
+        status: dbStatus.status,
+        readyState: dbStatus.readyState,
       },
       aiService: {
         status: aiServiceStatus,

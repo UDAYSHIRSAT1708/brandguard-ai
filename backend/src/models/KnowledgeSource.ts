@@ -57,4 +57,4 @@ const KnowledgeSourceSchema = new Schema<IKnowledgeSource>(
 KnowledgeSourceSchema.index({ organisationId: 1, status: 1, sourceType: 1 });
 KnowledgeSourceSchema.index({ content: 'text', title: 'text' });
 
-export const KnowledgeSource = mongoose.model<IKnowledgeSource>('KnowledgeSource', KnowledgeSourceSchema);
+export const KnowledgeSource = (mongoose.models.KnowledgeSource as mongoose.Model<IKnowledgeSource>) || mongoose.model<IKnowledgeSource>('KnowledgeSource', KnowledgeSourceSchema);

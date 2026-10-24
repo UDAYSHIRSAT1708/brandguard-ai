@@ -1,5 +1,4 @@
 import request from 'supertest';
-import mongoose from 'mongoose';
 import app from '../src/app';
 import { connectDB, disconnectDB } from '../src/config/db';
 
@@ -12,13 +11,26 @@ describe('Health and System Endpoints', () => {
     await disconnectDB();
   });
 
-  it('GET /api/health returns 200 with database check details', async () => {
+  it('GET /api/health returns 200 with sanitized database check details (no leaked host, name, or diagnostics)', async () => {
     const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('status');
     expect(res.body.checks.database.status).toBe('connected');
     expect(res.body.checks.database.readyState).toBe(1);
+    expect(res.body.checks.database.host).toBeUndefined();
+    expect(res.body.checks.database.name).toBeUndefined();
+    expect(res.body.checks.database.lastError).toBeUndefined();
     expect(res.body).toHaveProperty('environment');
+  });
+
+  it('GET /health alias returns 200 with identical sanitized database check', async () => {
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body.checks.database.status).toBe('connected');
+    expect(res.body.checks.database.readyState).toBe(1);
+    expect(res.body.checks.database.host).toBeUndefined();
+    expect(res.body.checks.database.name).toBeUndefined();
+    expect(res.body.checks.database.lastError).toBeUndefined();
   });
 
   it('GET /api/unknown-route returns structured 404 error without stack leak', async () => {

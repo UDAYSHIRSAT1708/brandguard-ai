@@ -28,8 +28,38 @@ if (env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
+import mongoose from 'mongoose';
+import { connectDB } from './config/db';
+
+// Database connection middleware for all incoming requests (crucial for Serverless / Vercel execution)
+app.use(async (req, res, next) => {
+  // Health check routes inspect connection status directly and format their own diagnostic response
+  if (req.path.startsWith('/api/health') || req.path === '/health') {
+    return next();
+  }
+
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+
+  try {
+    await connectDB();
+    next();
+  } catch {
+    // Database-dependent routes fail fast with 503 rather than hanging or crashing
+    res.status(503).json({
+      success: false,
+      error: {
+        message: 'Database service is currently unavailable. Please retry in a few moments.',
+        code: 'DATABASE_UNAVAILABLE',
+      },
+    });
+  }
+});
+
 // Health Check Route
 app.use('/api/health', healthRouter);
+app.use('/health', healthRouter);
 
 // Domain Routes
 import authRouter from './routes/auth.routes';

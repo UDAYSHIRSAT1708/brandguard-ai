@@ -27,4 +27,4 @@ const AuditEventSchema = new Schema<IAuditEvent>(
 // Append-only audit events, indexed by tenant and timestamp
 AuditEventSchema.index({ organisationId: 1, createdAt: -1 });
 
-export const AuditEvent = mongoose.model<IAuditEvent>('AuditEvent', AuditEventSchema);
+export const AuditEvent = (mongoose.models.AuditEvent as mongoose.Model<IAuditEvent>) || mongoose.model<IAuditEvent>('AuditEvent', AuditEventSchema);

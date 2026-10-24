@@ -46,4 +46,10 @@ async function startServer() {
   }
 }
 
-startServer();
+// In local execution (node server.js or ts-node-dev), start the server
+// In serverless environments (Vercel / AWS Lambda), do not call app.listen()
+if (process.env.VERCEL !== '1' && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
+export default app;

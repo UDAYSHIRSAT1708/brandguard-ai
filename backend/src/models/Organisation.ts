@@ -17,4 +17,4 @@ const OrganisationSchema = new Schema<IOrganisation>(
   { timestamps: true }
 );
 
-export const Organisation = mongoose.model<IOrganisation>('Organisation', OrganisationSchema);
+export const Organisation = (mongoose.models.Organisation as mongoose.Model<IOrganisation>) || mongoose.model<IOrganisation>('Organisation', OrganisationSchema);

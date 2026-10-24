@@ -31,4 +31,4 @@ const ApprovalDecisionSchema = new Schema<IApprovalDecision>(
   { timestamps: true }
 );
 
-export const ApprovalDecision = mongoose.model<IApprovalDecision>('ApprovalDecision', ApprovalDecisionSchema);
+export const ApprovalDecision = (mongoose.models.ApprovalDecision as mongoose.Model<IApprovalDecision>) || mongoose.model<IApprovalDecision>('ApprovalDecision', ApprovalDecisionSchema);

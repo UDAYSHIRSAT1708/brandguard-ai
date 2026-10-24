@@ -75,4 +75,4 @@ const ContentSchema = new Schema<IContent>(
 
 ContentSchema.index({ organisationId: 1, status: 1 });
 
-export const Content = mongoose.model<IContent>('Content', ContentSchema);
+export const Content = (mongoose.models.Content as mongoose.Model<IContent>) || mongoose.model<IContent>('Content', ContentSchema);

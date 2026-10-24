@@ -25,4 +25,4 @@ const ContentVersionSchema = new Schema<IContentVersion>(
 // Unique compound index: versionNumber is unique per content item
 ContentVersionSchema.index({ contentId: 1, versionNumber: 1 }, { unique: true });
 
-export const ContentVersion = mongoose.model<IContentVersion>('ContentVersion', ContentVersionSchema);
+export const ContentVersion = (mongoose.models.ContentVersion as mongoose.Model<IContentVersion>) || mongoose.model<IContentVersion>('ContentVersion', ContentVersionSchema);
