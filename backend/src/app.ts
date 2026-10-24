@@ -15,8 +15,9 @@ const app = express();
 export function resolveAllowedOrigins(): string[] {
   const allowed = new Set<string>();
 
-  // 1. Explicitly permit production frontend deployment
+  // 1. Explicitly permit production frontend deployment & current preview deployment
   allowed.add('https://brandguard-ai-dafa.vercel.app');
+  allowed.add('https://brandguard-ai-dafa-nhsqi3kpp-temp-7e59.vercel.app');
 
   // 2. Local development origins
   allowed.add('http://localhost:3000');
@@ -55,6 +56,11 @@ export const corsOptions: cors.CorsOptions = {
     const cleanOrigin = requestOrigin.trim().replace(/\/+$/, '');
     const allowed = resolveAllowedOrigins();
     if (allowed.includes(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    // Permit all genuine BrandGuard AI Vercel frontend deployments (production, branch, and preview deployments)
+    if (/^https:\/\/brandguard-ai[a-z0-9-]*\.vercel\.app$/i.test(cleanOrigin)) {
       return callback(null, true);
     }
 

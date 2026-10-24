@@ -89,6 +89,36 @@ describe('Production CORS & Preflight Verification', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.token).toBeDefined();
     });
+
+    it('handles preflight and POST requests from Vercel preview deployment URLs (e.g. from user screenshot)', async () => {
+      const PREVIEW_ORIGIN = 'https://brandguard-ai-dafa-nhsqi3kpp-temp-7e59.vercel.app';
+      const resOptions = await request(app)
+        .options('/api/auth/register')
+        .set('Origin', PREVIEW_ORIGIN)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type');
+
+      expect(resOptions.status).toBe(204);
+      expect(resOptions.headers['access-control-allow-origin']).toBe(PREVIEW_ORIGIN);
+      expect(resOptions.headers['access-control-allow-credentials']).toBe('true');
+
+      const uniqueSlug = `preview-test-${Date.now()}`;
+      const resPost = await request(app)
+        .post('/api/auth/register')
+        .set('Origin', PREVIEW_ORIGIN)
+        .set('Content-Type', 'application/json')
+        .send({
+          orgName: 'Preview Test Corp',
+          orgSlug: uniqueSlug,
+          adminName: 'Preview Admin',
+          adminEmail: `admin@${uniqueSlug}.com`,
+          adminPassword: 'Password123!',
+        });
+
+      expect(resPost.status).toBe(201);
+      expect(resPost.headers['access-control-allow-origin']).toBe(PREVIEW_ORIGIN);
+      expect(resPost.headers['access-control-allow-credentials']).toBe('true');
+    });
   });
 
   // ============================================================================
