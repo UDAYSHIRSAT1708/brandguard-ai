@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # 1. MongoDB Database
+  # -------------------------------------------------------------
+  mongo:
+    image: mongo:7.0
+    container_name: brandguard-mongo
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - brandguard-internal
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # -------------------------------------------------------------
+  # 2. Python FastAPI AI Microservice (Dual Provider + RAG)
+  # -------------------------------------------------------------
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: brandguard-ai-service
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:-brandguard-internal-secret-service-key-12345}
+      - AI_PRIMARY_PROVIDER=${AI_PRIMARY_PROVIDER:-gemini}
+      - AI_PRIMARY_MODEL=${AI_PRIMARY_MODEL:-gemini-flash-latest}
+      - AI_PRIMARY_API_KEY=${AI_PRIMARY_API_KEY:-${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}}
+      - AI_FALLBACK_PROVIDER=${AI_FALLBACK_PROVIDER:-openai}
+      - AI_FALLBACK_MODEL=${AI_FALLBACK_MODEL:-gpt-4o-mini}
+      - AI_FALLBACK_API_KEY=${AI_FALLBACK_API_KEY:-${OPENAI_API_KEY:-}}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-${AI_PRIMARY_API_KEY:-}}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-${AI_FALLBACK_API_KEY:-}}
+      - AI_REQUEST_TIMEOUT_SECONDS=${AI_REQUEST_TIMEOUT_SECONDS:-30}
+      - AI_MAX_RETRIES=${AI_MAX_RETRIES:-1}
+      - AI_CONTEXT_BUDGET_TOKENS=${AI_CONTEXT_BUDGET_TOKENS:-4000}
+      - BACKEND_URL=http://backend:5000
+      - FRONTEND_URL=http://frontend:80
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5000,http://frontend,http://backend:5000
+    networks:
+      - brandguard-internal
+      - brandguard-public
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # -------------------------------------------------------------
+  # 3. Node.js Express Application Backend & Governance Engine
+  # -------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: brandguard-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongo:27017/brandguard
+      - JWT_SECRET=${JWT_SECRET:-brandguard-production-jwt-secure-signing-secret-key-32bytes}
+      - JWT_EXPIRES_IN=24h
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - AI_SERVICE_URL=http://ai-service:8000
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:-brandguard-internal-secret-service-key-12345}
+      - ALLOW_AUTO_SEED=${ALLOW_AUTO_SEED:-false}
+    ports:
+      - "127.0.0.1:5000:5000"
+    networks:
+      - brandguard-internal
+      - brandguard-public
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # -------------------------------------------------------------
+  # 4. React Vite Frontend (Nginx Alpine Web Server)
+  # -------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+        - VITE_ENABLE_DEMO_ACCOUNTS=false
+    container_name: brandguard-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    networks:
+      - brandguard-internal
+      - brandguard-public
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  brandguard-internal:
+    driver: bridge
+  brandguard-public:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
