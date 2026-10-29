@@ -13,8 +13,8 @@ async def get_health(probe: bool = Query(False, description="Whether to execute 
     readiness, active connectivity, and last successful review without exposing raw API keys or internal secrets.
     """
     now = datetime.now(timezone.utc).isoformat()
-    primary_configured = bool(settings.AI_PRIMARY_API_KEY and len(settings.AI_PRIMARY_API_KEY.strip()) > 0)
-    fallback_configured = bool(settings.AI_FALLBACK_API_KEY and len(settings.AI_FALLBACK_API_KEY.strip()) > 0)
+    primary_configured = provider_manager.primary.is_configured()
+    fallback_configured = provider_manager.fallback.is_configured()
 
     if probe and (primary_configured or fallback_configured):
         probe_res = await provider_manager.probe_providers(timeout_seconds=2.5)

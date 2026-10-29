@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types';
 import { apiClient } from '../api/client';
+import { redactEmail } from '../utils/redact';
 
 export interface RegisterOrgData {
   orgName: string;
@@ -8,6 +9,18 @@ export interface RegisterOrgData {
   adminName: string;
   adminEmail: string;
   adminPassword: string;
+}
+
+export interface GoogleAuthPayload {
+  code: string;
+  codeVerifier: string;
+  redirectUri: string;
+  state: string;
+}
+
+export interface GoogleRegisterPayload extends GoogleAuthPayload {
+  orgName: string;
+  orgSlug: string;
 }
 
 interface AuthContextType {
@@ -18,6 +31,10 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (data: RegisterOrgData) => Promise<{ success: boolean; error?: string }>;
+  loginWithGoogle: (payload: GoogleAuthPayload) => Promise<{ success: boolean; error?: string; errorCode?: string }>;
+  registerWithGoogle: (payload: GoogleRegisterPayload) => Promise<{ success: boolean; error?: string; errorCode?: string }>;
+  linkGoogleAccount: (payload: GoogleAuthPayload) => Promise<{ success: boolean; error?: string }>;
+  unlinkGoogleAccount: () => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   sessionExpiredNotice: string | null;
   clearSessionExpiredNotice: () => void;
@@ -48,6 +65,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearSessionExpiredNotice = () => setSessionExpiredNotice(null);
 
+  // Helper to persist session tokens
+  const storeSessionTokens = (accessToken: string, refreshToken?: string) => {
+    setToken(accessToken);
+    localStorage.setItem('brandguard_token', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('brandguard_refresh_token', refreshToken);
+    }
+  };
+
+  const clearSessionTokens = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem('brandguard_token');
+    localStorage.removeItem('brandguard_refresh_token');
+  };
+
   // Revalidate session on boot or refresh
   const validateSession = useCallback(async (activeToken: string) => {
     setIsLoading(true);
@@ -66,6 +99,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: u.name,
           email: u.email,
           role: u.role,
+          authProvider: u.authProvider || 'local',
+          isGoogleLinked: Boolean(u.isGoogleLinked),
+          avatarUrl: u.avatarUrl,
           organisationId: typeof u.organisationId === 'string' ? u.organisationId : (orgObj?._id || orgObj?.id || ''),
           organisationName: u.organisationName || orgObj?.name || 'Editorial Governance',
           organisationSlug: u.organisationSlug || orgObj?.slug || 'editorial-governance',
@@ -73,15 +109,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setUser(resolvedUser);
         localStorage.setItem('brandguard_token', activeToken);
-        console.info(`[Auth Client] Session validated: User '${resolvedUser.email}', Role '${resolvedUser.role}', Org '${resolvedUser.organisationName}' (${resolvedUser.organisationSlug})`);
+        console.info(`[Auth Client] Session validated: User '${redactEmail(resolvedUser.email)}' [${resolvedUser.role}] in Org '${resolvedUser.organisationName}'`);
       } else {
         throw new Error('Invalid session payload');
       }
     } catch (err: any) {
       console.warn('[Auth Client] Session token expired or invalid:', err.message);
-      setToken(null);
-      setUser(null);
-      localStorage.removeItem('brandguard_token');
+      clearSessionTokens();
       setSessionExpiredNotice('Your session has expired or is invalid. Please sign in again.');
     } finally {
       setIsLoading(false);
@@ -100,9 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const handleUnauthorized = () => {
       console.warn('[Auth Client] Received unauthorized 401 broadcast. Revoking active session.');
-      setToken(null);
-      setUser(null);
-      localStorage.removeItem('brandguard_token');
+      clearSessionTokens();
       setSessionExpiredNotice('Your session expired. Please sign in to resume governance operations.');
     };
 
@@ -112,14 +144,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Real backend authentication
+  // Real backend password authentication
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     const normalizedEmail = email.trim().toLowerCase();
     try {
-      console.info(`[Auth Client] Submitting login request for email: '${normalizedEmail}'`);
+      console.info(`[Auth Client] Submitting login request for email: '${redactEmail(normalizedEmail)}'`);
       const res = await apiClient.post('/auth/login', { email: normalizedEmail, password });
       if (res.data?.success && res.data.data?.token) {
         const liveToken = res.data.data.token;
+        const refreshToken = res.data.data.refreshToken;
         const u = res.data.data.user;
         const orgObj = typeof u.organisationId === 'object' ? u.organisationId : null;
 
@@ -128,22 +161,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: u.name,
           email: u.email,
           role: u.role,
+          authProvider: u.authProvider || 'local',
+          isGoogleLinked: Boolean(u.isGoogleLinked),
+          avatarUrl: u.avatarUrl,
           organisationId: typeof u.organisationId === 'string' ? u.organisationId : (orgObj?._id || orgObj?.id || ''),
           organisationName: u.organisationName || orgObj?.name || 'Editorial Governance',
           organisationSlug: u.organisationSlug || orgObj?.slug || 'editorial-governance',
         };
 
-        setToken(liveToken);
+        storeSessionTokens(liveToken, refreshToken);
         setUser(resolvedUser);
-        localStorage.setItem('brandguard_token', liveToken);
         setSessionExpiredNotice(null);
-        console.info(`[Auth Client] Login successful: User '${resolvedUser.email}', Role '${resolvedUser.role}', Org '${resolvedUser.organisationName}'`);
+        console.info(`[Auth Client] Login successful: User '${redactEmail(resolvedUser.email)}' [${resolvedUser.role}] in Org '${resolvedUser.organisationName}'`);
         return { success: true };
       }
       return { success: false, error: 'Unexpected response format from authentication server.' };
     } catch (err: any) {
       const message = err.message || 'Invalid email or password.';
-      console.warn(`[Auth Client] Login failed for email '${normalizedEmail}': ${message}`);
+      console.warn(`[Auth Client] Login failed for email '${redactEmail(normalizedEmail)}': ${message}`);
       return { success: false, error: message };
     }
   };
@@ -153,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const normalizedEmail = data.adminEmail.trim().toLowerCase();
     const normalizedSlug = data.orgSlug.trim().toLowerCase();
     try {
-      console.info(`[Auth Client] Submitting organization registration for slug: '${normalizedSlug}', admin: '${normalizedEmail}'`);
+      console.info(`[Auth Client] Submitting organization registration for slug: '${normalizedSlug}', admin: '${redactEmail(normalizedEmail)}'`);
       const res = await apiClient.post('/auth/register', {
         ...data,
         adminEmail: normalizedEmail,
@@ -161,22 +196,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       if (res.data?.success && res.data.data?.token) {
         const liveToken = res.data.data.token;
+        const refreshToken = res.data.data.refreshToken;
         const u = res.data.data.user;
         const resolvedUser: User = {
           id: u.id || u._id,
           name: u.name,
           email: u.email || normalizedEmail,
           role: u.role,
+          authProvider: u.authProvider || 'local',
+          isGoogleLinked: Boolean(u.isGoogleLinked),
+          avatarUrl: u.avatarUrl,
           organisationId: u.organisationId,
           organisationName: u.organisationName || data.orgName,
           organisationSlug: u.organisationSlug || normalizedSlug,
         };
 
-        setToken(liveToken);
+        storeSessionTokens(liveToken, refreshToken);
         setUser(resolvedUser);
-        localStorage.setItem('brandguard_token', liveToken);
         setSessionExpiredNotice(null);
-        console.info(`[Auth Client] Registration successful: Org '${resolvedUser.organisationSlug}', Admin '${resolvedUser.email}'`);
+        console.info(`[Auth Client] Registration successful: Org '${resolvedUser.organisationSlug}', Admin '${redactEmail(resolvedUser.email)}'`);
         return { success: true };
       }
       return { success: false, error: 'Unexpected response format from registration server.' };
@@ -184,6 +222,114 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const message = err.message || 'Registration failed. Please check your submission.';
       console.warn(`[Auth Client] Registration failed for slug '${normalizedSlug}': ${message}`);
       return { success: false, error: message };
+    }
+  };
+
+  // Google OAuth Login
+  const loginWithGoogle = async (payload: GoogleAuthPayload): Promise<{ success: boolean; error?: string; errorCode?: string }> => {
+    try {
+      console.info('[Auth Client] Submitting Google OAuth callback exchange');
+      const res = await apiClient.post('/auth/oauth/google/callback', payload);
+      if (res.data?.success && res.data.data?.token) {
+        const liveToken = res.data.data.token;
+        const refreshToken = res.data.data.refreshToken;
+        const u = res.data.data.user;
+
+        const resolvedUser: User = {
+          id: u.id || u._id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          authProvider: 'google',
+          isGoogleLinked: true,
+          avatarUrl: u.avatarUrl,
+          organisationId: u.organisationId,
+          organisationName: u.organisationName || 'Editorial Governance',
+          organisationSlug: u.organisationSlug || 'editorial-governance',
+        };
+
+        storeSessionTokens(liveToken, refreshToken);
+        setUser(resolvedUser);
+        setSessionExpiredNotice(null);
+        console.info(`[Auth Client] Google Sign-In successful for '${redactEmail(resolvedUser.email)}'`);
+        return { success: true };
+      }
+      return { success: false, error: 'Unexpected response from Google OAuth server.' };
+    } catch (err: any) {
+      console.warn('[Auth Client] Google OAuth login failed:', err.message);
+      return {
+        success: false,
+        error: err.message || 'Google authentication failed.',
+        errorCode: err.code,
+      };
+    }
+  };
+
+  // Google OAuth Organization Registration
+  const registerWithGoogle = async (payload: GoogleRegisterPayload): Promise<{ success: boolean; error?: string; errorCode?: string }> => {
+    try {
+      console.info(`[Auth Client] Submitting Google OAuth registration for org: '${payload.orgSlug}'`);
+      const res = await apiClient.post('/auth/oauth/google/callback', payload);
+      if (res.data?.success && res.data.data?.token) {
+        const liveToken = res.data.data.token;
+        const refreshToken = res.data.data.refreshToken;
+        const u = res.data.data.user;
+
+        const resolvedUser: User = {
+          id: u.id || u._id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          authProvider: 'google',
+          isGoogleLinked: true,
+          avatarUrl: u.avatarUrl,
+          organisationId: u.organisationId,
+          organisationName: u.organisationName || payload.orgName,
+          organisationSlug: u.organisationSlug || payload.orgSlug,
+        };
+
+        storeSessionTokens(liveToken, refreshToken);
+        setUser(resolvedUser);
+        setSessionExpiredNotice(null);
+        console.info(`[Auth Client] Google registration successful: Org '${resolvedUser.organisationSlug}'`);
+        return { success: true };
+      }
+      return { success: false, error: 'Unexpected response from registration server.' };
+    } catch (err: any) {
+      console.warn('[Auth Client] Google OAuth registration failed:', err.message);
+      return {
+        success: false,
+        error: err.message || 'Google registration failed.',
+        errorCode: err.code,
+      };
+    }
+  };
+
+  // Link Google Account to Authenticated User
+  const linkGoogleAccount = async (payload: GoogleAuthPayload): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await apiClient.post('/auth/oauth/google/link', payload);
+      if (res.data?.success) {
+        setUser((prev) => (prev ? { ...prev, isGoogleLinked: true } : prev));
+        return { success: true };
+      }
+      return { success: false, error: 'Failed to link Google account.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Could not link Google account.' };
+    }
+  };
+
+  // Unlink Google Account
+  const unlinkGoogleAccount = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await apiClient.post('/auth/oauth/google/unlink');
+      if (res.data?.success) {
+        setUser((prev) => (prev ? { ...prev, isGoogleLinked: false } : prev));
+        return { success: true };
+      }
+      return { success: false, error: 'Failed to unlink Google account.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Could not unlink Google account.' };
     }
   };
 
@@ -198,10 +344,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     : undefined;
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('brandguard_token');
+  const logout = async () => {
+    try {
+      await apiClient.post('/auth/logout');
+    } catch {
+      // Ignored
+    } finally {
+      clearSessionTokens();
+    }
   };
 
   const role: UserRole = user?.role || 'creator';
@@ -217,6 +367,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         register,
+        loginWithGoogle,
+        registerWithGoogle,
+        linkGoogleAccount,
+        unlinkGoogleAccount,
         logout,
         sessionExpiredNotice,
         clearSessionExpiredNotice,

@@ -32,7 +32,7 @@ services:
       - ENVIRONMENT=production
       - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:-brandguard-internal-secret-service-key-12345}
       - AI_PRIMARY_PROVIDER=${AI_PRIMARY_PROVIDER:-gemini}
-      - AI_PRIMARY_MODEL=${AI_PRIMARY_MODEL:-gemini-flash-latest}
+      - AI_PRIMARY_MODEL=${AI_PRIMARY_MODEL:-gemini-flash-lite-latest}
       - AI_PRIMARY_API_KEY=${AI_PRIMARY_API_KEY:-${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}}
       - AI_FALLBACK_PROVIDER=${AI_FALLBACK_PROVIDER:-openai}
       - AI_FALLBACK_MODEL=${AI_FALLBACK_MODEL:-gpt-4o-mini}

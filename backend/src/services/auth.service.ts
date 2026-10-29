@@ -4,6 +4,7 @@ import { User, IUser, UserRole } from '../models/User';
 import { Organisation, IOrganisation } from '../models/Organisation';
 import { env } from '../config/env';
 import { logAuditEvent } from './audit.service';
+import { redactEmail } from '../utils/redact';
 
 export class AuthService {
   static async registerOrgAndAdmin(params: {
@@ -12,13 +13,13 @@ export class AuthService {
     adminName: string;
     adminEmail: string;
     adminPassword: string;
-  }): Promise<{ user: IUser; org: IOrganisation; token: string }> {
+  }): Promise<{ user: IUser; org: IOrganisation; token: string; refreshToken: string }> {
     const normalizedEmail = params.adminEmail.trim().toLowerCase();
     const normalizedSlug = params.orgSlug.trim().toLowerCase();
     const trimmedOrgName = params.orgName.trim();
     const trimmedAdminName = params.adminName.trim();
 
-    console.log(`[AUTH] Registration attempt: Org '${trimmedOrgName}' (${normalizedSlug}), Admin: '${normalizedEmail}'`);
+    console.log(`[AUTH] Registration attempt: Org '${trimmedOrgName}' (${normalizedSlug}), Admin: '${redactEmail(normalizedEmail)}'`);
 
     // 1. Verify slug uniqueness
     const existingOrg = await Organisation.findOne({ slug: normalizedSlug });
@@ -32,7 +33,7 @@ export class AuthService {
     // 2. Verify global email uniqueness
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-      console.warn(`[AUTH] Registration conflict: User email '${normalizedEmail}' already exists.`);
+      console.warn(`[AUTH] Registration conflict: User email '${redactEmail(normalizedEmail)}' already exists.`);
       const err: any = new Error(`An account with email '${normalizedEmail}' already exists. Please sign in instead.`);
       err.statusCode = 409;
       throw err;
@@ -57,6 +58,8 @@ export class AuthService {
         email: normalizedEmail,
         passwordHash,
         role: 'admin',
+        authProvider: 'local',
+        refreshTokenVersion: 1,
         active: true,
       });
     } catch (createErr) {
@@ -66,9 +69,10 @@ export class AuthService {
       throw createErr;
     }
 
-    // 6. Generate JWT token
+    // 6. Generate JWT access and refresh tokens
     const token = this.generateToken(user);
-    console.log(`[AUTH] Registration successful: Org '${org.name}' (${org.slug}), Admin User: '${user.email}' [${user.role}]`);
+    const refreshToken = this.generateRefreshToken(user);
+    console.log(`[AUTH] Registration successful: Org '${org.name}' (${org.slug}), Admin User: '${redactEmail(user.email)}' [${user.role}]`);
 
     await logAuditEvent({
       organisationId: org._id,
@@ -76,10 +80,10 @@ export class AuthService {
       action: 'ORGANISATION_REGISTERED',
       resourceType: 'Organisation',
       resourceId: org._id.toString(),
-      details: { orgName: org.name, adminEmail: user.email },
+      details: { orgName: org.name, adminEmail: redactEmail(user.email) },
     });
 
-    return { user, org, token };
+    return { user, org, token, refreshToken };
   }
 
   static async createUserInOrg(params: {
@@ -95,6 +99,7 @@ export class AuthService {
 
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
+      console.warn(`[AUTH] Create user conflict: Email '${redactEmail(normalizedEmail)}' already exists.`);
       const err: any = new Error(`User with email '${normalizedEmail}' already exists.`);
       err.statusCode = 409;
       throw err;
@@ -109,6 +114,8 @@ export class AuthService {
       email: normalizedEmail,
       passwordHash,
       role: params.role,
+      authProvider: 'local',
+      refreshTokenVersion: 1,
       active: true,
     });
 
@@ -118,7 +125,7 @@ export class AuthService {
       action: 'USER_CREATED',
       resourceType: 'User',
       resourceId: user._id.toString(),
-      details: { email: user.email, role: user.role },
+      details: { email: redactEmail(user.email), role: user.role },
     });
 
     return user;
@@ -128,10 +135,10 @@ export class AuthService {
     email: string;
     password: string;
     organisationSlug?: string;
-  }): Promise<{ user: IUser; org: IOrganisation; token: string }> {
+  }): Promise<{ user: IUser; org: IOrganisation; token: string; refreshToken: string }> {
     const normalizedEmail = params.email.trim().toLowerCase();
     let query: any = { email: normalizedEmail };
-    console.log(`[AUTH] Login attempt for email: '${normalizedEmail}'${params.organisationSlug ? ` (Org Slug: '${params.organisationSlug}')` : ''}`);
+    console.log(`[AUTH] Login attempt for email: '${redactEmail(normalizedEmail)}'${params.organisationSlug ? ` (Org Slug: '${params.organisationSlug}')` : ''}`);
 
     if (params.organisationSlug) {
       const org = await Organisation.findOne({ slug: params.organisationSlug.trim().toLowerCase() });
@@ -146,22 +153,30 @@ export class AuthService {
 
     const user = await User.findOne(query);
     if (!user) {
-      console.warn(`[AUTH] Login failed: User account with email '${normalizedEmail}' does not exist.`);
+      console.warn(`[AUTH] Login failed: User account with email '${redactEmail(normalizedEmail)}' does not exist.`);
       const err: any = new Error('Invalid email or password credentials.');
       err.statusCode = 401;
       throw err;
     }
 
     if (!user.active) {
-      console.warn(`[AUTH] Login failed: Account for '${normalizedEmail}' is marked inactive.`);
+      console.warn(`[AUTH] Login failed: Account for '${redactEmail(normalizedEmail)}' is marked inactive.`);
       const err: any = new Error('This user account has been deactivated.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    // Google OAuth account check (no passwordHash exists)
+    if (!user.passwordHash) {
+      console.warn(`[AUTH] Login failed: User '${redactEmail(normalizedEmail)}' registered with Google OAuth and has no password configured.`);
+      const err: any = new Error('This account was created using Google Sign-In. Please sign in with Google.');
       err.statusCode = 401;
       throw err;
     }
 
     const isMatch = await bcrypt.compare(params.password, user.passwordHash);
     if (!isMatch) {
-      console.warn(`[AUTH] Login failed: Password mismatch for user '${normalizedEmail}'.`);
+      console.warn(`[AUTH] Login failed: Password mismatch for user '${redactEmail(normalizedEmail)}'.`);
       const err: any = new Error('Invalid email or password credentials.');
       err.statusCode = 401;
       throw err;
@@ -169,14 +184,15 @@ export class AuthService {
 
     const org = await Organisation.findById(user.organisationId);
     if (!org) {
-      console.warn(`[AUTH] Login failed: Organisation '${user.organisationId}' not found for user '${normalizedEmail}'.`);
+      console.warn(`[AUTH] Login failed: Organisation '${user.organisationId}' not found for user '${redactEmail(normalizedEmail)}'.`);
       const err: any = new Error('Associated tenant organisation not found.');
       err.statusCode = 404;
       throw err;
     }
 
     const token = this.generateToken(user);
-    console.log(`[AUTH] Login successful: User '${user.email}' [${user.role}] in Org '${org.name}' (${org.slug})`);
+    const refreshToken = this.generateRefreshToken(user);
+    console.log(`[AUTH] Login successful: User '${redactEmail(user.email)}' [${user.role}] in Org '${org.name}' (${org.slug})`);
 
     await logAuditEvent({
       organisationId: user.organisationId,
@@ -186,7 +202,7 @@ export class AuthService {
       resourceId: user._id.toString(),
     });
 
-    return { user, org, token };
+    return { user, org, token, refreshToken };
   }
 
   static generateToken(user: IUser): string {
@@ -198,7 +214,127 @@ export class AuthService {
         email: user.email,
       },
       env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: (env.JWT_EXPIRES_IN || '24h') as any }
     );
+  }
+
+  static generateRefreshToken(user: IUser): string {
+    const secret = env.JWT_REFRESH_SECRET || `${env.JWT_SECRET}-refresh`;
+    return jwt.sign(
+      {
+        userId: user._id.toString(),
+        tokenVersion: user.refreshTokenVersion || 1,
+      },
+      secret,
+      { expiresIn: (env.JWT_REFRESH_EXPIRES_IN || '7d') as any }
+    );
+  }
+
+  static async rotateRefreshToken(refreshToken: string): Promise<{
+    token: string;
+    refreshToken: string;
+    user: IUser;
+    org: IOrganisation;
+  }> {
+    const secret = env.JWT_REFRESH_SECRET || `${env.JWT_SECRET}-refresh`;
+    let decoded: any;
+    try {
+      decoded = jwt.verify(refreshToken, secret);
+    } catch {
+      const err: any = new Error('Invalid or expired refresh token. Please sign in again.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (!decoded.userId || typeof decoded.tokenVersion !== 'number') {
+      const err: any = new Error('Malformed refresh token payload.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user || !user.active) {
+      const err: any = new Error('User account not found or deactivated.');
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const org = await Organisation.findById(user.organisationId);
+    if (!org) {
+      const err: any = new Error('Associated tenant organisation not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const now = new Date();
+    const graceExpiry = new Date(now.getTime() + 15 * 1000); // 15s window for concurrent tab requests
+
+    // Case A: Atomic Primary Rotation (current active version matches tokenVersion)
+    const rotatedUser = await User.findOneAndUpdate(
+      {
+        _id: decoded.userId,
+        refreshTokenVersion: decoded.tokenVersion,
+      },
+      {
+        $set: {
+          previousRefreshTokenVersion: decoded.tokenVersion,
+          previousVersionExpiresAt: graceExpiry,
+        },
+        $inc: { refreshTokenVersion: 1 },
+      },
+      { new: true }
+    );
+
+    if (rotatedUser) {
+      const newToken = this.generateToken(rotatedUser);
+      const newRefreshToken = this.generateRefreshToken(rotatedUser);
+      return { token: newToken, refreshToken: newRefreshToken, user: rotatedUser, org };
+    }
+
+    // Case B: Concurrent Multi-Tab In-Flight Request (matches immediately superseded version within 15s window)
+    const reloadedUser = await User.findById(decoded.userId);
+    if (
+      reloadedUser &&
+      reloadedUser.previousRefreshTokenVersion === decoded.tokenVersion &&
+      reloadedUser.previousVersionExpiresAt &&
+      reloadedUser.previousVersionExpiresAt > now
+    ) {
+      console.log(
+        `[AUTH] Concurrent refresh flight window match for user '${redactEmail(reloadedUser.email)}' (re-issuing active version ${reloadedUser.refreshTokenVersion}).`
+      );
+      const synchronizedToken = this.generateToken(reloadedUser);
+      const synchronizedRefreshToken = this.generateRefreshToken(reloadedUser);
+      return {
+        token: synchronizedToken,
+        refreshToken: synchronizedRefreshToken,
+        user: reloadedUser,
+        org,
+      };
+    }
+
+    // Case C: Token Theft / Replay / Expired superseded token
+    console.warn(
+      `[AUTH SECURITY] Refresh token replay / theft detected for user '${redactEmail(user.email)}'! ` +
+        `Presented version: ${decoded.tokenVersion}, Active version: ${user.refreshTokenVersion}. ` +
+        `Revoking all user sessions.`
+    );
+
+    // Revoke all active sessions immediately
+    await User.findByIdAndUpdate(decoded.userId, {
+      $inc: { refreshTokenVersion: 5 },
+      $unset: { previousRefreshTokenVersion: 1, previousVersionExpiresAt: 1 },
+    });
+
+    const err: any = new Error('Refresh token compromise or replay detected. All sessions revoked.');
+    err.statusCode = 401;
+    throw err;
+  }
+
+  static async revokeUserSessions(userId: string): Promise<void> {
+    await User.findByIdAndUpdate(userId, {
+      $inc: { refreshTokenVersion: 1 },
+      $unset: { previousRefreshTokenVersion: 1, previousVersionExpiresAt: 1 },
+    });
+    console.log(`[AUTH] Revoked all active sessions for userId: ${userId}`);
   }
 }

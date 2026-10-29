@@ -14,12 +14,12 @@ class Settings(BaseSettings):
     
     # Primary AI Provider Configuration
     AI_PRIMARY_PROVIDER: str = os.getenv("AI_PRIMARY_PROVIDER", "gemini")
-    AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", "gemini-flash-latest")
+    AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", "gemini-flash-lite-latest")
     AI_PRIMARY_API_KEY: Optional[str] = (
         os.getenv("AI_PRIMARY_API_KEY") or
         (os.getenv("GEMINI_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "gemini" else None) or
         (os.getenv("OPENAI_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "openai" else None) or
-        os.getenv("GOOGLE_API_KEY")
+        (os.getenv("GOOGLE_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "gemini" else None)
     )
     
     # Fallback AI Provider Configuration
@@ -28,8 +28,7 @@ class Settings(BaseSettings):
     AI_FALLBACK_API_KEY: Optional[str] = (
         os.getenv("AI_FALLBACK_API_KEY") or
         (os.getenv("OPENAI_API_KEY") if os.getenv("AI_FALLBACK_PROVIDER", "openai").lower() == "openai" else None) or
-        (os.getenv("GEMINI_API_KEY") if os.getenv("AI_FALLBACK_PROVIDER", "openai").lower() == "gemini" else None) or
-        os.getenv("GOOGLE_API_KEY")
+        (os.getenv("GEMINI_API_KEY") if os.getenv("AI_FALLBACK_PROVIDER", "openai").lower() == "gemini" else None)
     )
     
     # Guardrails and Budgets

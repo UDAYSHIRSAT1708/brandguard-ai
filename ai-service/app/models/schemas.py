@@ -31,8 +31,20 @@ class Finding(BaseModel):
     suggested_correction: Optional[str] = Field(None, description="Actionable alternative preserving creator's intent")
     requires_human_review: bool = Field(default=False)
 
+class Recommendation(BaseModel):
+    id: str = Field(..., description="Unique recommendation identifier")
+    issue: str = Field(..., description="Clear identification of the editorial or brand problem")
+    rationale: str = Field(..., description="Why this recommendation matters based on brand guidelines")
+    impact: str = Field(..., description="Potential business, brand, or regulatory impact of non-compliance")
+    evidence_sources: List[str] = Field(default_factory=list, description="IDs of authorized sources supporting this recommendation")
+    evidence_excerpts: List[str] = Field(default_factory=list, description="Verbatim citations from retrieved evidence")
+    suggested_correction: str = Field(..., description="Actionable replacement text")
+    is_evidence_backed: bool = Field(default=True, description="True if backed directly by retrieved evidence; False if general model inference")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
 class FindingSummary(BaseModel):
     total_findings: int = 0
+    total_recommendations: int = 0
     critical: int = 0
     high: int = 0
     medium: int = 0
@@ -55,6 +67,7 @@ class ReviewResponse(BaseModel):
     retry_count: int
     is_demo_mode: bool
     findings: List[Finding] = Field(default_factory=list)
+    recommendations: List[Recommendation] = Field(default_factory=list)
     summary: FindingSummary
 
 class ProviderHealthStatus(BaseModel):

@@ -15,8 +15,7 @@ import {
   ContentItem, 
   KnowledgeSource, 
   AuditEvent, 
-  DashboardMetrics, 
-  ReviewResult 
+  DashboardMetrics 
 } from './types';
 
 function BrandGuardApp() {
@@ -100,7 +99,7 @@ function BrandGuardApp() {
   const handleTriggerReview = async (
     contentId: string,
     simulateFailover: boolean = false
-  ): Promise<ReviewResult> => {
+  ): Promise<any> => {
     const result = await BrandGuardApi.triggerReview(contentId, simulateFailover);
     
     // Refresh contents and current content

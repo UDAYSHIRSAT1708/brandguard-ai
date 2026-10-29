@@ -96,18 +96,84 @@ router.post('/:id/submit', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-// Trigger AI Governance Review
+// Trigger AI Governance Review (Hybrid sync/async with durable job tracking)
 router.post('/:id/review', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contentId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const { simulateFailover } = req.body;
-    const result = await ReviewOrchestratorService.triggerReview({
+    const { simulateFailover, preferAsync, idempotencyKey: bodyIdempotencyKey } = req.body || {};
+    const headerIdempotencyKey = (req.headers['idempotency-key'] || req.headers['x-idempotency-key']) as string | undefined;
+    const idempotencyKey = bodyIdempotencyKey || headerIdempotencyKey;
+
+    const result = await ReviewOrchestratorService.submitReview({
       contentId,
       organisationId: req.user!.organisationId,
       userId: req.user!.userId,
       simulateFailover: Boolean(simulateFailover),
+      preferAsync: Boolean(preferAsync),
+      idempotencyKey,
     });
-    res.json({ success: true, data: result });
+
+    const statusCode = result.mode === 'async' ? 202 : 200;
+    res.status(statusCode).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get active review job for this content item (reconnection after page refresh)
+router.get('/:id/review/jobs/active', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const contentId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const activeJob = await ReviewOrchestratorService.getActiveJob(contentId, req.user!.organisationId);
+    res.json({ success: true, data: { activeJob } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get status and results of a specific review job
+router.get('/:id/review/jobs/:jobId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const jobId = Array.isArray(req.params.jobId) ? req.params.jobId[0] : req.params.jobId;
+    const job = await ReviewOrchestratorService.getJobById(jobId, req.user!.organisationId);
+
+    if (!job) {
+      res.status(404).json({ success: false, error: { message: 'Review job not found or access denied.' } });
+      return;
+    }
+
+    let content: any = null;
+    if (job.status === 'SUCCEEDED') {
+      content = await Content.findOne({ _id: job.contentId, organisationId: req.user!.organisationId });
+    }
+
+    res.json({ success: true, data: { job, content } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Retry an eligible failed review job
+router.post('/:id/review/jobs/:jobId/retry', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const jobId = Array.isArray(req.params.jobId) ? req.params.jobId[0] : req.params.jobId;
+    const existing = await ReviewOrchestratorService.getJobById(jobId, req.user!.organisationId);
+    if (!existing) {
+      res.status(404).json({ success: false, error: { message: 'Review job not found or access denied.' } });
+      return;
+    }
+
+    try {
+      const job = await ReviewOrchestratorService.retryJob({
+        jobId,
+        organisationId: req.user!.organisationId,
+        userId: req.user!.userId,
+      });
+
+      res.json({ success: true, data: { job } });
+    } catch (retryErr: any) {
+      res.status(400).json({ success: false, error: { message: retryErr.message } });
+    }
   } catch (err) {
     next(err);
   }

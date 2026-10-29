@@ -37,6 +37,7 @@ build/
 out/
 .output/
 *.tsbuildinfo
+.vercel/
 
 # ------------------------------------------------------------------------------
 # Python & Virtual Environments (ai-service)
@@ -60,7 +61,8 @@ sdist/
 .installed.cfg
 *.egg
 
-# Python Testing & Coverage
+# Testing & Coverage (Jest & Pytest)
+coverage/
 .pytest_cache/
 .coverage
 .coverage.*
@@ -71,12 +73,13 @@ coverage.xml
 .hypothesis/
 
 # ------------------------------------------------------------------------------
-# Frontend & Bundler Caches (Vite)
+# Frontend & Bundler Caches (Vite, ESLint)
 # ------------------------------------------------------------------------------
 .vite/
 .vite-cache/
 .parcel-cache/
 .turbo/
+.eslintcache
 
 # ------------------------------------------------------------------------------
 # Database & Persistent Data Stores

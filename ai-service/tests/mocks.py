@@ -6,7 +6,8 @@ from app.models.schemas import (
     Finding, 
     FindingCategory, 
     FindingSeverity, 
-    FindingSummary
+    FindingSummary,
+    Recommendation
 )
 
 class MockProvider(BaseAIProvider):
@@ -36,6 +37,7 @@ class MockProvider(BaseAIProvider):
     ) -> ReviewResponse:
         start_time = time.time()
         findings: List[Finding] = []
+        recommendations: List[Recommendation] = []
         body_lower = body.lower()
 
         if "guarantee" in body_lower or "100%" in body_lower:
@@ -53,6 +55,19 @@ class MockProvider(BaseAIProvider):
                     requires_human_review=True,
                 )
             )
+            recommendations.append(
+                Recommendation(
+                    id="rec_mock_1",
+                    issue="Prohibited absolute performance guarantee in marketing copy",
+                    rationale="Absolute performance guarantees violate regulatory and editorial compliance standards.",
+                    impact="HIGH",
+                    evidence_sources=["src_guideline_01"],
+                    evidence_excerpts=["Absolute performance guarantees are strictly prohibited across all marketing and product copy."],
+                    suggested_correction="achieved 94% accuracy in benchmark testing",
+                    is_evidence_backed=True,
+                    confidence=0.98,
+                )
+            )
 
         duration_ms = int((time.time() - start_time) * 1000)
         return ReviewResponse(
@@ -64,6 +79,7 @@ class MockProvider(BaseAIProvider):
             retry_count=0,
             is_demo_mode=False,
             findings=findings,
+            recommendations=recommendations,
             summary=FindingSummary(
                 total_findings=len(findings),
                 critical=sum(1 for f in findings if f.severity == FindingSeverity.CRITICAL),

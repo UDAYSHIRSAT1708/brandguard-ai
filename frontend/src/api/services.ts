@@ -4,6 +4,8 @@ import {
   KnowledgeSource, 
   AuditEvent, 
   Finding, 
+  Recommendation,
+  ReviewJob,
   DashboardMetrics, 
   ReviewResult 
 } from '../types';
@@ -60,6 +62,17 @@ export const BrandGuardApi = {
             resolution: f.resolution,
             resolutionReason: f.resolutionReason,
           })),
+          recommendations: (item.recommendations || []).map((r: any, idx: number) => ({
+            id: r.id || `rec_${idx}`,
+            issue: r.issue || '',
+            rationale: r.rationale || '',
+            impact: r.impact || 'MEDIUM',
+            evidenceSources: r.evidenceSources || [],
+            evidenceExcerpts: r.evidenceExcerpts || [],
+            suggestedCorrection: r.suggestedCorrection || '',
+            isEvidenceBacked: Boolean(r.isEvidenceBacked),
+            confidence: r.confidence ?? 1.0,
+          })),
         })),
       };
     }
@@ -83,6 +96,7 @@ export const BrandGuardApi = {
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
         findings: item.findings || [],
+        recommendations: item.recommendations || [],
         versions: res.data.data.versions || [],
       };
     }
@@ -112,6 +126,7 @@ export const BrandGuardApi = {
             createdAt: c.createdAt,
             updatedAt: c.updatedAt,
             findings: c.findings || [],
+            recommendations: c.recommendations || [],
           },
         };
       }
@@ -136,6 +151,7 @@ export const BrandGuardApi = {
             createdAt: c.createdAt,
             updatedAt: c.updatedAt,
             findings: [],
+            recommendations: [],
           },
         };
       }
@@ -143,33 +159,158 @@ export const BrandGuardApi = {
     throw new Error('Failed to persist content draft to database.');
   },
 
-  // 6. Trigger Authentic AI Governance Review
-  async triggerReview(contentId: string, simulateFailover: boolean = false): Promise<ReviewResult> {
-    const res = await apiClient.post(`/content/${contentId}/review`, { simulateFailover });
-    if (res.data?.success && res.data.data?.reviewResult) {
-      const rr = res.data.data.reviewResult;
-      const mappedFindings: Finding[] = (rr.findings || []).map((f: any, idx: number) => ({
-        id: f.id || `find_live_${idx}`,
-        category: f.category,
-        severity: f.severity,
-        flaggedText: f.flagged_text || f.flaggedText,
-        explanation: f.explanation,
-        guideline: f.guideline,
-        sourceIds: f.source_ids || f.sourceIds || [],
-        sourceExcerpts: f.source_excerpts || f.sourceExcerpts || [],
-        confidence: f.confidence ?? 1.0,
-        suggestedCorrection: f.suggested_correction || f.suggestedCorrection,
-        requiresHumanReview: Boolean(f.requires_human_review ?? f.requiresHumanReview),
-      }));
+  // 6. Trigger Authentic AI Governance Review (Hybrid sync or async with durable job tracking)
+  async triggerReview(
+    contentId: string,
+    simulateFailover: boolean = false,
+    preferAsync: boolean = false,
+    idempotencyKey?: string
+  ): Promise<{
+    mode: 'sync' | 'async';
+    jobId: string;
+    status: string;
+    reviewResult?: ReviewResult;
+    content?: ContentItem;
+  }> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
 
+    const res = await apiClient.post(
+      `/content/${contentId}/review`,
+      { simulateFailover, preferAsync, idempotencyKey },
+      { timeout: 45000, headers }
+    );
+
+    if (res.data?.success && res.data?.data) {
+      const d = res.data.data;
+      if (d.mode === 'sync' && (d.reviewResult || d.content)) {
+        const rr = d.reviewResult || {};
+        const mappedFindings: Finding[] = (d.content?.findings || rr.findings || []).map((f: any, idx: number) => ({
+          id: f.id || f._id || `find_live_${idx}`,
+          category: f.category || 'tone',
+          severity: f.severity || 'medium',
+          flaggedText: f.flaggedText || f.flagged_text || '',
+          explanation: f.explanation || '',
+          guideline: f.guideline || '',
+          sourceIds: f.sourceIds || f.source_ids || [],
+          sourceExcerpts: f.sourceExcerpts || f.source_excerpts || [],
+          confidence: typeof f.confidence === 'number' ? f.confidence : 1.0,
+          suggestedCorrection: f.suggestedCorrection || f.suggested_correction,
+          requiresHumanReview: Boolean(f.requiresHumanReview ?? f.requires_human_review ?? false),
+        }));
+
+        const mappedRecommendations: Recommendation[] = (d.content?.recommendations || rr.recommendations || []).map((r: any, idx: number) => ({
+          id: r.id || `rec_live_${idx}`,
+          issue: r.issue || '',
+          rationale: r.rationale || '',
+          impact: (['HIGH', 'MEDIUM', 'LOW'].includes(r.impact?.toUpperCase()) ? r.impact.toUpperCase() : 'MEDIUM') as 'HIGH' | 'MEDIUM' | 'LOW',
+          evidenceSources: r.evidenceSources || r.evidence_sources || [],
+          evidenceExcerpts: r.evidenceExcerpts || r.evidence_excerpts || [],
+          suggestedCorrection: r.suggestedCorrection || r.suggested_correction || '',
+          isEvidenceBacked: Boolean(r.isEvidenceBacked ?? r.is_evidence_backed ?? false),
+          confidence: typeof r.confidence === 'number' ? r.confidence : 1.0,
+        }));
+
+        return {
+          mode: 'sync',
+          jobId: d.jobId,
+          status: d.status || 'SUCCEEDED',
+          content: d.content,
+          reviewResult: {
+            findings: mappedFindings,
+            recommendations: mappedRecommendations,
+            providerUsed: rr.provider || (simulateFailover ? 'OpenAI GPT-4o-mini (Failover)' : 'Google Gemini 2.0 Flash (Primary)'),
+            isDemoFallback: false,
+            latencyMs: rr.latencyMs || rr.latency_ms,
+          },
+        };
+      }
+
+      // Async job initiated
       return {
-        findings: mappedFindings,
-        providerUsed: rr.provider || (simulateFailover ? 'OpenAI GPT-4o-mini (Failover)' : 'Google Gemini 2.0 Flash (Primary)'),
-        isDemoFallback: false,
-        latencyMs: rr.latency_ms,
+        mode: 'async',
+        jobId: d.jobId,
+        status: d.status || 'QUEUED',
       };
     }
-    throw new Error(res.data?.error?.message || 'AI Review service invocation failed.');
+    throw new Error(res.data?.error?.message || 'AI Review submission failed.');
+  },
+
+  // 6a. Get Active Review Job (for reconnection after browser refresh)
+  async getActiveReviewJob(contentId: string): Promise<ReviewJob | null> {
+    try {
+      const res = await apiClient.get(`/content/${contentId}/review/jobs/active`);
+      if (res.data?.success && res.data.data?.activeJob) {
+        const j = res.data.data.activeJob;
+        return {
+          id: j._id || j.id,
+          contentId: j.contentId,
+          versionNumber: j.versionNumber,
+          status: j.status,
+          mode: j.mode,
+          attemptCount: j.attemptCount,
+          maxAttempts: j.maxAttempts,
+          startedAt: j.startedAt,
+          completedAt: j.completedAt,
+          error: j.error,
+          result: j.result,
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  // 6b. Get Review Job Status and Result
+  async getReviewJobStatus(contentId: string, jobId: string): Promise<{ job: ReviewJob; content?: ContentItem }> {
+    const res = await apiClient.get(`/content/${contentId}/review/jobs/${jobId}`);
+    if (res.data?.success && res.data.data?.job) {
+      const j = res.data.data.job;
+      return {
+        job: {
+          id: j._id || j.id,
+          contentId: j.contentId,
+          versionNumber: j.versionNumber,
+          status: j.status,
+          mode: j.mode,
+          attemptCount: j.attemptCount,
+          maxAttempts: j.maxAttempts,
+          startedAt: j.startedAt,
+          completedAt: j.completedAt,
+          error: j.error,
+          result: j.result,
+        },
+        content: res.data.data.content,
+      };
+    }
+    throw new Error(res.data?.error?.message || 'Failed to retrieve review job status.');
+  },
+
+  // 6c. Retry Failed Review Job
+  async retryReviewJob(contentId: string, jobId: string): Promise<{ job: ReviewJob }> {
+    const res = await apiClient.post(`/content/${contentId}/review/jobs/${jobId}/retry`);
+    if (res.data?.success && res.data.data?.job) {
+      const j = res.data.data.job;
+      return {
+        job: {
+          id: j._id || j.id,
+          contentId: j.contentId,
+          versionNumber: j.versionNumber,
+          status: j.status,
+          mode: j.mode,
+          attemptCount: j.attemptCount,
+          maxAttempts: j.maxAttempts,
+          startedAt: j.startedAt,
+          completedAt: j.completedAt,
+          error: j.error,
+          result: j.result,
+        },
+      };
+    }
+    throw new Error(res.data?.error?.message || 'Failed to retry review job.');
   },
 
   // 7. Submit Content for Human Approval

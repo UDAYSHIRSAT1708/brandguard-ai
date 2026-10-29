@@ -73,6 +73,8 @@ export const corsOptions: cors.CorsOptions = {
     'Content-Type',
     'Authorization',
     'X-Internal-API-Key',
+    'Idempotency-Key',
+    'idempotency-key',
     'Accept',
     'Origin',
     'X-Requested-With',

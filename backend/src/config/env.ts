@@ -25,6 +25,11 @@ const envSchema = z
     ALLOW_PUBLIC_REGISTRATION: z
       .preprocess((val) => val === 'true' || val === true || val === '1', z.boolean())
       .default(true),
+    GOOGLE_CLIENT_ID: z.string().optional().default(''),
+    GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
+    GOOGLE_REDIRECT_URI: z.string().optional().default(''),
+    JWT_REFRESH_SECRET: z.string().optional().default(''),
+    JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {

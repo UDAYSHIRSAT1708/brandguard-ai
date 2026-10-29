@@ -5,6 +5,9 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  authProvider?: 'local' | 'google';
+  isGoogleLinked?: boolean;
+  avatarUrl?: string;
   organisationId: string;
   organisationName?: string;
   organisationSlug?: string;
@@ -51,6 +54,46 @@ export interface Finding {
   resolutionReason?: string;
 }
 
+export interface Recommendation {
+  id: string;
+  issue: string;
+  rationale: string;
+  impact: 'HIGH' | 'MEDIUM' | 'LOW';
+  evidenceSources: string[];
+  evidenceExcerpts: string[];
+  suggestedCorrection: string;
+  isEvidenceBacked: boolean;
+  confidence: number;
+}
+
+export type JobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+
+export interface ReviewJob {
+  id: string;
+  contentId: string;
+  versionNumber: number;
+  status: JobStatus;
+  mode: 'sync' | 'async';
+  attemptCount: number;
+  maxAttempts: number;
+  startedAt?: string;
+  completedAt?: string;
+  error?: {
+    message: string;
+    code?: string;
+    retryable: boolean;
+    statusCode?: number;
+  } | null;
+  result?: {
+    reviewId: string;
+    provider: string;
+    model: string;
+    latencyMs: number;
+    findingsCount: number;
+    recommendationsCount: number;
+  } | null;
+}
+
 export interface ContentVersion {
   id: string;
   contentId: string;
@@ -73,6 +116,7 @@ export interface ContentItem {
   createdAt: string;
   updatedAt: string;
   findings?: Finding[];
+  recommendations?: Recommendation[];
   versions?: ContentVersion[];
 }
 
@@ -134,6 +178,7 @@ export interface DashboardMetrics {
 
 export interface ReviewResult {
   findings: Finding[];
+  recommendations?: Recommendation[];
   providerUsed: string;
   isDemoFallback: boolean;
   latencyMs?: number;

@@ -34,6 +34,17 @@ export interface IContent extends Document {
     resolution?: string;
     resolutionReason?: string;
   }>;
+  recommendations?: Array<{
+    id: string;
+    issue: string;
+    rationale: string;
+    impact: 'HIGH' | 'MEDIUM' | 'LOW';
+    evidenceSources: string[];
+    evidenceExcerpts: string[];
+    suggestedCorrection: string;
+    isEvidenceBacked: boolean;
+    confidence: number;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +80,7 @@ const ContentSchema = new Schema<IContent>(
     currentVersion: { type: Number, default: 1 },
     body: { type: String, required: true },
     findings: { type: Schema.Types.Mixed, default: [] },
+    recommendations: { type: Schema.Types.Mixed, default: [] },
   },
   { timestamps: true }
 );

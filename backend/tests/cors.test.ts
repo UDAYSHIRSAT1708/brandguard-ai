@@ -46,6 +46,33 @@ describe('Production CORS & Preflight Verification', () => {
       expect(res.headers['access-control-allow-headers']).toContain('Authorization');
     });
 
+    it('handles preflight for review submission with Idempotency-Key header', async () => {
+      const res = await request(app)
+        .options('/api/content/671000000000000000000001/review')
+        .set('Origin', PRODUCTION_ORIGIN)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type, authorization, idempotency-key');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(PRODUCTION_ORIGIN);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      const allowHeaders = (res.headers['access-control-allow-headers'] || '').toLowerCase();
+      expect(allowHeaders).toContain('idempotency-key');
+    });
+
+    it('handles preflight with mixed-case Idempotency-Key header', async () => {
+      const res = await request(app)
+        .options('/api/content/671000000000000000000001/review')
+        .set('Origin', PRODUCTION_ORIGIN)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'Content-Type, Authorization, Idempotency-Key');
+
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(PRODUCTION_ORIGIN);
+      const allowHeaders = (res.headers['access-control-allow-headers'] || '').toLowerCase();
+      expect(allowHeaders).toContain('idempotency-key');
+    });
+
     it('handles preflight for content and health routes', async () => {
       const resContent = await request(app)
         .options('/api/content')
@@ -176,6 +203,17 @@ describe('Production CORS & Preflight Verification', () => {
         .set('Access-Control-Request-Method', 'POST');
 
       // The preflight should not include the disallowed origin or wildcard
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+      expect(res.headers['access-control-allow-origin']).not.toBe('*');
+    });
+
+    it('does NOT provide Access-Control-Allow-Origin on preflight with Idempotency-Key for unauthorized origin', async () => {
+      const res = await request(app)
+        .options('/api/content/671000000000000000000001/review')
+        .set('Origin', DISALLOWED_ORIGIN)
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'content-type, authorization, idempotency-key');
+
       expect(res.headers['access-control-allow-origin']).toBeUndefined();
       expect(res.headers['access-control-allow-origin']).not.toBe('*');
     });

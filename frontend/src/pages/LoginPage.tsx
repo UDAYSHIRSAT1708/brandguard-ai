@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Shield, 
   Lock, 
@@ -15,9 +15,20 @@ import {
 } from 'lucide-react';
 import { useAuth, isDemoAllowed, DEMO_CREDENTIALS } from '../context/AuthContext';
 import { UserRole } from '../types';
+import { apiClient } from '../api/client';
+import { generateRandomString, generateCodeChallenge } from '../utils/pkce';
+import { redactEmail } from '../utils/redact';
 
 export const LoginPage: React.FC = () => {
-  const { login, register, sessionExpiredNotice, clearSessionExpiredNotice } = useAuth();
+  const {
+    login,
+    register,
+    loginWithGoogle,
+    registerWithGoogle,
+    sessionExpiredNotice,
+    clearSessionExpiredNotice,
+  } = useAuth();
+
   const [mode, setMode] = useState<'login' | 'register'>('login');
 
   // Login form state
@@ -44,8 +55,171 @@ export const LoginPage: React.FC = () => {
     setOrgSlug(generated);
   };
 
-  // Permit demo-account shortcuts strictly in development when explicitly enabled via env
   const isDemoEnabled = isDemoAllowed;
+
+  // Detect OAuth redirect callbacks from Google
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
+    const oauthCode = params.get('code');
+    const oauthState = params.get('state');
+
+    if (oauthError) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      if (oauthError === 'access_denied') {
+        setErrorMessage('Google Sign-In was cancelled. You may sign in with your password or try again.');
+      } else {
+        setErrorMessage(`Google authentication returned: ${oauthError}`);
+      }
+      return;
+    }
+
+    if (oauthCode) {
+      const storedVerifier = sessionStorage.getItem('brandguard_oauth_verifier') || undefined;
+      const storedState = sessionStorage.getItem('brandguard_oauth_state');
+      const storedIntent = sessionStorage.getItem('brandguard_oauth_intent') || 'login';
+      const storedOrgName = sessionStorage.getItem('brandguard_oauth_org_name') || undefined;
+      const storedOrgSlug = sessionStorage.getItem('brandguard_oauth_org_slug') || undefined;
+
+      // Clean browser address bar query parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      if (!oauthState || !storedState || oauthState !== storedState) {
+        setErrorMessage('Invalid or missing OAuth state parameter. Security check rejected this response to prevent CSRF.');
+        return;
+      }
+
+      if (!storedVerifier) {
+        setErrorMessage('Missing PKCE code verifier in browser session. Please try signing in with Google again.');
+        return;
+      }
+
+      // Cleanup session storage
+      sessionStorage.removeItem('brandguard_oauth_verifier');
+      sessionStorage.removeItem('brandguard_oauth_state');
+      sessionStorage.removeItem('brandguard_oauth_intent');
+      sessionStorage.removeItem('brandguard_oauth_org_name');
+      sessionStorage.removeItem('brandguard_oauth_org_slug');
+
+      const redirectUri = `${window.location.origin}/login`;
+
+      setLoading(true);
+      clearSessionExpiredNotice();
+
+      if (storedIntent === 'register' && storedOrgName && storedOrgSlug) {
+        registerWithGoogle({
+          code: oauthCode,
+          codeVerifier: storedVerifier!,
+          redirectUri,
+          state: oauthState!,
+          orgName: storedOrgName,
+          orgSlug: storedOrgSlug,
+        }).then((result) => {
+          setLoading(false);
+          if (!result.success) {
+            setErrorMessage(result.error || 'Google organization registration failed.');
+          }
+        });
+      } else {
+        loginWithGoogle({
+          code: oauthCode,
+          codeVerifier: storedVerifier!,
+          redirectUri,
+          state: oauthState!,
+        }).then((result) => {
+          setLoading(false);
+          if (!result.success) {
+            if (result.errorCode === 'ACCOUNT_EXISTS_PASSWORD') {
+              setMode('login');
+              setErrorMessage(
+                'An existing account with your email is registered using password authentication. Please sign in with your email and password below to link Google Sign-In.'
+              );
+            } else if (result.errorCode === 'NO_ACCOUNT_FOUND') {
+              setErrorMessage(
+                'No BrandGuard account is associated with this Google profile. Please contact your administrator for an invite, or register a new organization.'
+              );
+            } else {
+              setErrorMessage(result.error || 'Google Sign-In failed.');
+            }
+          }
+        });
+      }
+    }
+  }, [loginWithGoogle, registerWithGoogle, clearSessionExpiredNotice]);
+
+  // Initiate PKCE Google Sign-In
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setErrorMessage(null);
+    clearSessionExpiredNotice();
+
+    try {
+      const codeVerifier = generateRandomString(64);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const redirectUri = `${window.location.origin}/login`;
+
+      const res = await apiClient.get('/auth/oauth/google/init', {
+        params: {
+          intent: 'login',
+          redirectUri,
+          codeChallenge,
+        },
+      });
+
+      if (res.data?.success && res.data.data?.authUrl) {
+        sessionStorage.setItem('brandguard_oauth_verifier', codeVerifier);
+        sessionStorage.setItem('brandguard_oauth_state', res.data.data.state);
+        sessionStorage.setItem('brandguard_oauth_intent', 'login');
+        window.location.href = res.data.data.authUrl;
+      } else {
+        throw new Error('Failed to retrieve authorization endpoint from server.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to initialize Google Sign-In.');
+      setLoading(false);
+    }
+  };
+
+  // Initiate PKCE Google Organization Registration
+  const handleGoogleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orgName.trim() || !orgSlug.trim()) {
+      setErrorMessage('Please provide both Organization Title and Workspace Slug.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage(null);
+    clearSessionExpiredNotice();
+
+    try {
+      const codeVerifier = generateRandomString(64);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const redirectUri = `${window.location.origin}/login`;
+
+      const res = await apiClient.get('/auth/oauth/google/init', {
+        params: {
+          intent: 'register',
+          redirectUri,
+          codeChallenge,
+        },
+      });
+
+      if (res.data?.success && res.data.data?.authUrl) {
+        sessionStorage.setItem('brandguard_oauth_verifier', codeVerifier);
+        sessionStorage.setItem('brandguard_oauth_state', res.data.data.state);
+        sessionStorage.setItem('brandguard_oauth_intent', 'register');
+        sessionStorage.setItem('brandguard_oauth_org_name', orgName.trim());
+        sessionStorage.setItem('brandguard_oauth_org_slug', orgSlug.trim().toLowerCase());
+        window.location.href = res.data.data.authUrl;
+      } else {
+        throw new Error('Failed to retrieve authorization endpoint from server.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to initialize Google registration.');
+      setLoading(false);
+    }
+  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,10 +232,10 @@ export const LoginPage: React.FC = () => {
     setErrorMessage(null);
     clearSessionExpiredNotice();
 
-    console.info(`[Auth UI] Submitting login request for: ${email.trim()}`);
+    console.info(`[Auth UI] Submitting login request for: ${redactEmail(email.trim())}`);
     const result = await login(email.trim(), password.trim());
     if (!result.success) {
-      console.warn(`[Auth UI] Login failed for ${email.trim()}: ${result.error}`);
+      console.warn(`[Auth UI] Login failed for ${redactEmail(email.trim())}: ${result.error}`);
       setErrorMessage(result.error || 'Authentication failed. Please verify your credentials.');
     }
     setLoading(false);
@@ -83,7 +257,7 @@ export const LoginPage: React.FC = () => {
     setErrorMessage(null);
     clearSessionExpiredNotice();
 
-    console.info(`[Auth UI] Registering organization '${orgSlug.trim()}' with admin '${adminEmail.trim()}'`);
+    console.info(`[Auth UI] Registering organization '${orgSlug.trim()}' with admin '${redactEmail(adminEmail.trim())}'`);
     const result = await register({
       orgName: orgName.trim(),
       orgSlug: orgSlug.trim().toLowerCase(),
@@ -108,21 +282,19 @@ export const LoginPage: React.FC = () => {
       setMode('login');
     }
 
-    // 1. Populate the form credentials into inputs immediately
     setEmail(creds.email);
     setPassword(creds.password);
     setErrorMessage(null);
     clearSessionExpiredNotice();
 
-    // 2. Perform real login request
     setLoading(true);
-    console.info(`[Auth UI] One-click demo login triggered for role: ${targetRole} (${creds.email})`);
+    console.info(`[Auth UI] One-click demo login triggered for role: ${targetRole} (${redactEmail(creds.email)})`);
     const result = await login(creds.email, creds.password);
     if (!result.success) {
-      console.warn(`[Auth UI] One-click demo login failed for ${creds.email}: ${result.error}`);
+      console.warn(`[Auth UI] One-click demo login failed for ${redactEmail(creds.email)}: ${result.error}`);
       setErrorMessage(result.error || 'Quick login failed. Ensure backend server is operational.');
     } else {
-      console.info(`[Auth UI] One-click demo login succeeded for ${creds.email}`);
+      console.info(`[Auth UI] One-click demo login succeeded for ${redactEmail(creds.email)}`);
     }
     setLoading(false);
   };
@@ -185,7 +357,48 @@ export const LoginPage: React.FC = () => {
           {errorMessage && (
             <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start space-x-2.5 animate-fadeIn">
               <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-              <div className="leading-relaxed font-sans font-medium">{errorMessage}</div>
+              <div className="flex-1 leading-relaxed font-sans font-medium">{errorMessage}</div>
+            </div>
+          )}
+
+          {/* Google OAuth Single Sign-On Button */}
+          {mode === 'login' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={loading}
+                className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-800 rounded-xl text-xs font-semibold border border-ink-200 shadow-sm transition-all duration-150 disabled:opacity-50 cursor-pointer"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>Continue with Google</span>
+              </button>
+
+              <div className="relative my-3">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-ink-200"></div>
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="px-2.5 bg-surface text-ink-400 font-sans">or sign in with password</span>
+                </div>
+              </div>
             </div>
           )}
 
@@ -237,7 +450,7 @@ export const LoginPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 flex items-center justify-center space-x-2 py-3 px-4 bg-forest text-white rounded-xl text-xs font-bold hover:bg-forest-dark transition-all duration-150 shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full mt-2 flex items-center justify-center space-x-2 py-3 px-4 bg-forest text-white rounded-xl text-xs font-bold hover:bg-forest-dark transition-all duration-150 shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {loading ? (
                   <>
@@ -266,139 +479,180 @@ export const LoginPage: React.FC = () => {
 
           {/* Registration Form */}
           {mode === 'register' && (
-            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
-                  Organization Title
-                </label>
-                <div className="relative rounded-lg shadow-subtle">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
-                    <Building className="w-4 h-4" />
+            <div className="space-y-4">
+              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
+                    Organization Title
+                  </label>
+                  <div className="relative rounded-lg shadow-subtle">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
+                      <Building className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      value={orgName}
+                      onChange={(e) => handleOrgNameChange(e.target.value)}
+                      placeholder="Acme Global Corporation"
+                      disabled={loading}
+                      className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={orgName}
-                    onChange={(e) => handleOrgNameChange(e.target.value)}
-                    placeholder="Acme Global Corporation"
-                    disabled={loading}
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
-                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
-                  Workspace URL Slug
-                </label>
-                <div className="relative rounded-lg shadow-subtle">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
-                    <Hash className="w-4 h-4" />
+                <div>
+                  <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
+                    Workspace URL Slug
+                  </label>
+                  <div className="relative rounded-lg shadow-subtle">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
+                      <Hash className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      value={orgSlug}
+                      onChange={(e) => setOrgSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                      placeholder="acme-global"
+                      disabled={loading}
+                      className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-mono"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={orgSlug}
-                    onChange={(e) => setOrgSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                    placeholder="acme-global"
-                    disabled={loading}
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-mono"
-                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
-                  Administrator Full Name
-                </label>
-                <div className="relative rounded-lg shadow-subtle">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
-                    <User className="w-4 h-4" />
+                {/* Google Workspace Setup Option */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={handleGoogleRegister}
+                    disabled={loading || !orgName.trim() || !orgSlug.trim()}
+                    className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-800 rounded-xl text-xs font-semibold border border-ink-200 shadow-sm transition-all duration-150 disabled:opacity-50 cursor-pointer"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                      />
+                    </svg>
+                    <span>Register Workspace with Google</span>
+                  </button>
+
+                  <div className="relative my-3">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-ink-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="px-2 bg-surface text-ink-400 font-sans">or setup with password</span>
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={adminName}
-                    onChange={(e) => setAdminName(e.target.value)}
-                    placeholder="Sarah Chen"
-                    disabled={loading}
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
-                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
-                  Administrator Work Email
-                </label>
-                <div className="relative rounded-lg shadow-subtle">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
-                    <Mail className="w-4 h-4" />
+                <div>
+                  <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
+                    Administrator Full Name
+                  </label>
+                  <div className="relative rounded-lg shadow-subtle">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      value={adminName}
+                      onChange={(e) => setAdminName(e.target.value)}
+                      placeholder="Sarah Chen"
+                      disabled={loading}
+                      className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
+                    />
                   </div>
-                  <input
-                    type="email"
-                    required
-                    value={adminEmail}
-                    onChange={(e) => setAdminEmail(e.target.value)}
-                    placeholder="admin@acme-global.com"
-                    disabled={loading}
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
-                  />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
-                  Administrator Password (min 8 characters)
-                </label>
-                <div className="relative rounded-lg shadow-subtle">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
-                    <Lock className="w-4 h-4" />
+                <div>
+                  <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
+                    Administrator Work Email
+                  </label>
+                  <div className="relative rounded-lg shadow-subtle">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      placeholder="admin@acme-global.com"
+                      disabled={loading}
+                      className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-sans"
+                    />
                   </div>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    disabled={loading}
-                    className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-mono"
-                  />
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-3 flex items-center justify-center space-x-2 py-3 px-4 bg-forest text-white rounded-xl text-xs font-bold hover:bg-forest-dark transition-all duration-150 shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin mr-1.5" />
-                    <span>Registering Organization...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Create Organization & Workspace</span>
-                    <ArrowRight className="w-4 h-4 ml-1" />
-                  </>
-                )}
-              </button>
+                <div>
+                  <label className="block text-xs font-bold text-ink-900 font-sans mb-1">
+                    Administrator Password (min 8 characters)
+                  </label>
+                  <div className="relative rounded-lg shadow-subtle">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-ink-400">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      disabled={loading}
+                      className="block w-full pl-9 pr-3 py-2.5 text-xs bg-canvas border border-ink-200 rounded-lg text-ink-900 placeholder-ink-400 focus:outline-none focus:ring-1 focus:ring-forest focus:border-forest transition-colors font-mono"
+                    />
+                  </div>
+                </div>
 
-              <div className="text-center pt-2">
                 <button
-                  type="button"
-                  onClick={() => { setMode('login'); setErrorMessage(null); }}
-                  className="text-xs text-forest hover:text-forest-dark font-medium font-sans"
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-3 flex items-center justify-center space-x-2 py-3 px-4 bg-forest text-white rounded-xl text-xs font-bold hover:bg-forest-dark transition-all duration-150 shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  Already have an account? <span className="underline font-bold">Sign In</span>
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin mr-1.5" />
+                      <span>Registering Organization...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Create Organization & Workspace</span>
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </>
+                  )}
                 </button>
-              </div>
-            </form>
+
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setMode('login'); setErrorMessage(null); }}
+                    className="text-xs text-forest hover:text-forest-dark font-medium font-sans"
+                  >
+                    Already have an account? <span className="underline font-bold">Sign In</span>
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
 
-          {/* Quick-Fill Demonstration Credentials for Seamless Evaluation (Dev / Explicit Demo only) */}
+          {/* Quick-Fill Demonstration Credentials (Dev only) */}
           {isDemoEnabled && mode === 'login' && (
             <div className="pt-4 border-t border-ink-100 space-y-3">
               <div className="flex items-center justify-between">
