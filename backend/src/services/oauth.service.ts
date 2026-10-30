@@ -28,14 +28,32 @@ export interface GoogleProfile {
 export class OAuthService {
   public static oauth2ClientOverride: OAuth2Client | null = null;
 
+  /**
+   * Resolves the single canonical OAuth redirect URI for BrandGuard AI.
+   * Priority:
+   * 1. Explicitly requested URI (if valid and provided)
+   * 2. Configured GOOGLE_REDIRECT_URI from environment
+   * 3. Canonical default: ${FRONTEND_URL}/login
+   */
+  static resolveCanonicalRedirectUri(requestedUri?: string): string {
+    if (requestedUri && requestedUri.trim().length > 0) {
+      return requestedUri.trim();
+    }
+    if (env.GOOGLE_REDIRECT_URI && env.GOOGLE_REDIRECT_URI.trim().length > 0) {
+      return env.GOOGLE_REDIRECT_URI.trim();
+    }
+    return `${env.FRONTEND_URL}/login`;
+  }
+
   private static getOAuthClient(redirectUri?: string): OAuth2Client {
     if (this.oauth2ClientOverride) {
       return this.oauth2ClientOverride;
     }
+    const resolvedUri = this.resolveCanonicalRedirectUri(redirectUri);
     return new OAuth2Client({
       clientId: env.GOOGLE_CLIENT_ID || 'mock-google-client-id',
       clientSecret: env.GOOGLE_CLIENT_SECRET || 'mock-google-client-secret',
-      redirectUri: redirectUri || env.GOOGLE_REDIRECT_URI || `${env.FRONTEND_URL}/auth/callback`,
+      redirectUri: resolvedUri,
     });
   }
 
@@ -45,10 +63,13 @@ export class OAuthService {
     codeChallenge?: string;
   }): string {
     const nonce = crypto.randomBytes(24).toString('hex');
+    const resolvedRedirectUri = params?.redirectUri
+      ? this.resolveCanonicalRedirectUri(params.redirectUri)
+      : undefined;
     const payload: OAuthStatePayload = {
       nonce,
       intent: params?.intent || 'login',
-      redirectUri: params?.redirectUri || env.GOOGLE_REDIRECT_URI || `${env.FRONTEND_URL}/auth/callback`,
+      redirectUri: resolvedRedirectUri || '',
       codeChallenge: params?.codeChallenge,
       createdAt: Date.now(),
     };
@@ -107,17 +128,17 @@ export class OAuthService {
     state?: string;
     codeChallenge?: string;
     intent?: 'login' | 'register' | 'link';
-  }): { authUrl: string; state: string; clientId: string } {
+  }): { authUrl: string; state: string; clientId: string; redirectUri: string } {
+    const canonicalRedirectUri = this.resolveCanonicalRedirectUri(params.redirectUri);
     const state =
       params.state ||
       this.generateStateToken({
         intent: params.intent,
-        redirectUri: params.redirectUri,
+        redirectUri: canonicalRedirectUri,
         codeChallenge: params.codeChallenge,
       });
-    const redirect = params.redirectUri || env.GOOGLE_REDIRECT_URI || `${env.FRONTEND_URL}/auth/callback`;
 
-    const client = this.getOAuthClient(redirect);
+    const client = this.getOAuthClient(canonicalRedirectUri);
     const authUrl = client.generateAuthUrl({
       access_type: 'offline',
       scope: ['openid', 'email', 'profile'],
@@ -131,6 +152,7 @@ export class OAuthService {
       authUrl,
       state,
       clientId: env.GOOGLE_CLIENT_ID,
+      redirectUri: canonicalRedirectUri,
     };
   }
 
@@ -260,7 +282,19 @@ export class OAuthService {
       }
     }
 
-    // 4. Exchange code for Google profile
+    // 4. Strict redirectUri binding check: assert callback redirectUri matches state token
+    if (statePayload.redirectUri && statePayload.redirectUri.trim().length > 0 && params.redirectUri !== statePayload.redirectUri) {
+      console.warn(
+        `[AUTH OAUTH] Redirect URI mismatch: state has '${statePayload.redirectUri}' but callback has '${params.redirectUri}'`
+      );
+      const err: any = new Error(
+        `Redirect URI mismatch: callback specifies '${params.redirectUri}', but authorization was initialized with '${statePayload.redirectUri}'.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 5. Exchange code for Google profile
     let profile: GoogleProfile;
     try {
       profile = await this.exchangeCodeForGoogleProfile({
@@ -448,6 +482,18 @@ export class OAuthService {
         err.statusCode = 400;
         throw err;
       }
+    }
+
+    // Strict redirectUri binding check
+    if (statePayload.redirectUri && statePayload.redirectUri.trim().length > 0 && params.redirectUri !== statePayload.redirectUri) {
+      console.warn(
+        `[AUTH OAUTH] Redirect URI mismatch in account linking: state has '${statePayload.redirectUri}' but callback has '${params.redirectUri}'`
+      );
+      const err: any = new Error(
+        `Redirect URI mismatch: callback specifies '${params.redirectUri}', but authorization was initialized with '${statePayload.redirectUri}'.`
+      );
+      err.statusCode = 400;
+      throw err;
     }
 
     // 3. User verification

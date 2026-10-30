@@ -185,10 +185,11 @@ export const LoginPage: React.FC = () => {
       });
 
       if (res.data?.success && res.data.data?.authUrl) {
+        const canonicalRedirect = res.data.data.redirectUri || redirectUri;
         sessionStorage.setItem('brandguard_oauth_verifier', codeVerifier);
         sessionStorage.setItem('brandguard_oauth_state', res.data.data.state);
         sessionStorage.setItem('brandguard_oauth_intent', 'login');
-        sessionStorage.setItem('brandguard_oauth_redirect_uri', redirectUri);
+        sessionStorage.setItem('brandguard_oauth_redirect_uri', canonicalRedirect);
         window.location.href = res.data.data.authUrl;
       } else {
         throw new Error('Failed to retrieve authorization endpoint from server.');
@@ -227,12 +228,13 @@ export const LoginPage: React.FC = () => {
       });
 
       if (res.data?.success && res.data.data?.authUrl) {
+        const canonicalRedirect = res.data.data.redirectUri || redirectUri;
         sessionStorage.setItem('brandguard_oauth_verifier', codeVerifier);
         sessionStorage.setItem('brandguard_oauth_state', res.data.data.state);
         sessionStorage.setItem('brandguard_oauth_intent', 'register');
         sessionStorage.setItem('brandguard_oauth_org_name', orgName.trim());
         sessionStorage.setItem('brandguard_oauth_org_slug', orgSlug.trim().toLowerCase());
-        sessionStorage.setItem('brandguard_oauth_redirect_uri', redirectUri);
+        sessionStorage.setItem('brandguard_oauth_redirect_uri', canonicalRedirect);
         window.location.href = res.data.data.authUrl;
       } else {
         throw new Error('Failed to retrieve authorization endpoint from server.');

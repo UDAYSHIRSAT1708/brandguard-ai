@@ -458,7 +458,7 @@ export const SettingsHealthPage: React.FC = () => {
               <div className="space-y-2.5 text-xs border-t border-ink-100 pt-3.5 font-sans">
                 <div className="flex justify-between py-1 border-b border-ink-50">
                   <span className="text-ink-500">Model Deployment:</span>
-                  <span className="font-mono font-bold text-ink-900">{fallback?.model || 'gpt-4o-mini'}</span>
+                  <span className="font-mono font-bold text-ink-900">{fallback?.model || 'llama-3.3-70b-versatile'}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-ink-50">
                   <span className="text-ink-500">Connectivity State:</span>

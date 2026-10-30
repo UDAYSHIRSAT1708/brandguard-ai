@@ -17,7 +17,18 @@ const envSchema = z
     AI_SERVICE_URL: z.string().default('http://localhost:8000'),
     MONGODB_URI: z.string().optional().default(''),
     JWT_SECRET: z.string().min(16).default(DEV_JWT_PLACEHOLDER),
-    JWT_EXPIRES_IN: z.string().default('24h'),
+    JWT_EXPIRES_IN: z
+      .string()
+      .default('24h')
+      .transform((val) => {
+        if (!val || typeof val !== 'string') return '24h';
+        const trimmed = val.trim();
+        if (/^\d+$/.test(trimmed)) {
+          const num = parseInt(trimmed, 10);
+          return num <= 72 ? `${num}h` : `${num}s`;
+        }
+        return trimmed;
+      }),
     AI_SERVICE_API_KEY: z.string().default('brandguard-internal-secret-service-key-12345'),
     ALLOW_AUTO_SEED: z
       .preprocess((val) => val === 'true' || val === true || val === '1', z.boolean())
@@ -29,7 +40,18 @@ const envSchema = z
     GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
     GOOGLE_REDIRECT_URI: z.string().optional().default(''),
     JWT_REFRESH_SECRET: z.string().optional().default(''),
-    JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+    JWT_REFRESH_EXPIRES_IN: z
+      .string()
+      .default('7d')
+      .transform((val) => {
+        if (!val || typeof val !== 'string') return '7d';
+        const trimmed = val.trim();
+        if (/^\d+$/.test(trimmed)) {
+          const num = parseInt(trimmed, 10);
+          return num <= 30 ? `${num}d` : `${num}h`;
+        }
+        return trimmed;
+      }),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {

@@ -26,8 +26,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Public health check
+# Root liveness check
+@app.get("/", tags=["Health"])
+async def root_status():
+    return {
+        "status": "online",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "environment": os.getenv("ENVIRONMENT", "development")
+    }
+
+# Public health check (supports /health and /api/health)
 app.include_router(health_router, tags=["Health"])
+app.include_router(health_router, prefix="/api", tags=["Health"])
 
 # AI Review Router
 from app.api.review import router as review_router

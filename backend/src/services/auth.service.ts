@@ -6,6 +6,16 @@ import { env } from '../config/env';
 import { logAuditEvent } from './audit.service';
 import { redactEmail } from '../utils/redact';
 
+function sanitizeExpiry(expiry: string | undefined, fallback: string): string {
+  if (!expiry || typeof expiry !== 'string') return fallback;
+  const trimmed = expiry.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const num = parseInt(trimmed, 10);
+    return num <= 72 ? `${num}h` : `${num}s`;
+  }
+  return trimmed;
+}
+
 export class AuthService {
   static async registerOrgAndAdmin(params: {
     orgName: string;
@@ -211,6 +221,7 @@ export class AuthService {
   }
 
   static generateToken(user: IUser, isOwner?: boolean): string {
+    const expiry = sanitizeExpiry(env.JWT_EXPIRES_IN, '24h');
     return jwt.sign(
       {
         userId: user._id.toString(),
@@ -221,19 +232,20 @@ export class AuthService {
         isOwner: Boolean(isOwner || user.role === 'owner'),
       },
       env.JWT_SECRET,
-      { expiresIn: (env.JWT_EXPIRES_IN || '24h') as any }
+      { expiresIn: expiry as any }
     );
   }
 
   static generateRefreshToken(user: IUser): string {
     const secret = env.JWT_REFRESH_SECRET || `${env.JWT_SECRET}-refresh`;
+    const refreshExpiry = sanitizeExpiry(env.JWT_REFRESH_EXPIRES_IN, '7d');
     return jwt.sign(
       {
         userId: user._id.toString(),
         tokenVersion: user.refreshTokenVersion || 1,
       },
       secret,
-      { expiresIn: (env.JWT_REFRESH_EXPIRES_IN || '7d') as any }
+      { expiresIn: refreshExpiry as any }
     );
   }
 

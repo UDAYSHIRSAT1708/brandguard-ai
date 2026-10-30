@@ -107,6 +107,26 @@ describe('Phase 1: Google OAuth 2.0 PKCE, Serverless Nonce Protection & Session 
         /invalid or expired oauth state/i
       );
     });
+
+    it('resolves canonical redirect URI defaulting to ${FRONTEND_URL}/login and returns it in init', async () => {
+      // 1. Without explicit query param: defaults to canonical /login
+      const resDefault = await request(app).get('/api/auth/oauth/google/init');
+      expect(resDefault.status).toBe(200);
+      expect(resDefault.body.data.redirectUri).toBe('http://localhost:3000/login');
+      expect(resDefault.body.data.authUrl).toContain(encodeURIComponent('http://localhost:3000/login'));
+
+      // 2. With production canonical URI: returns and binds exact production redirect URI
+      const prodRedirectUri = 'https://brandguard-ai-dafa.vercel.app/login';
+      const resProd = await request(app)
+        .get('/api/auth/oauth/google/init')
+        .query({ redirectUri: prodRedirectUri });
+      expect(resProd.status).toBe(200);
+      expect(resProd.body.data.redirectUri).toBe(prodRedirectUri);
+      expect(resProd.body.data.authUrl).toContain(encodeURIComponent(prodRedirectUri));
+
+      const decoded = await OAuthService.validateStateToken(resProd.body.data.state);
+      expect(decoded.redirectUri).toBe(prodRedirectUri);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -186,6 +206,27 @@ describe('Phase 1: Google OAuth 2.0 PKCE, Serverless Nonce Protection & Session 
       expect(res.status).toBe(400);
       expect(res.body.error.message).toMatch(/does not match the challenge bound to this OAuth state/i);
     });
+
+    it('rejects callback when redirectUri does not match the URI bound to the state token', async () => {
+      const { codeVerifier, codeChallenge } = generateTestPKCE();
+      const boundUri = 'https://brandguard-ai-dafa.vercel.app/login';
+      const state = OAuthService.generateStateToken({
+        codeChallenge,
+        redirectUri: boundUri,
+      });
+
+      const res = await request(app)
+        .post('/api/auth/oauth/google/callback')
+        .send({
+          code: 'valid-google-code',
+          codeVerifier,
+          state,
+          redirectUri: 'https://attacker-controlled-domain.com/evil-callback',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/Redirect URI mismatch/i);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -237,6 +278,49 @@ describe('Phase 1: Google OAuth 2.0 PKCE, Serverless Nonce Protection & Session 
       // Verify audit event
       const audit = await AuditEvent.findOne({ action: 'USER_LOGIN_GOOGLE', userId: user._id });
       expect(audit).not.toBeNull();
+    });
+
+    it('completes login flow using exact production canonical redirect URI (https://brandguard-ai-dafa.vercel.app/login)', async () => {
+      const org = await Organisation.create({ name: 'Prod Corp', slug: 'prod-corp' });
+      const user = await User.create({
+        organisationId: org._id,
+        name: 'Production Google User',
+        email: 'prod-user@brandguard.ai',
+        googleId: 'google-sub-prod-999',
+        authProvider: 'google',
+        role: 'editor',
+        active: true,
+      });
+
+      const prodRedirectUri = 'https://brandguard-ai-dafa.vercel.app/login';
+      const { codeVerifier, codeChallenge } = generateTestPKCE();
+
+      // State initialized with exact production redirect URI
+      const state = OAuthService.generateStateToken({
+        codeChallenge,
+        redirectUri: prodRedirectUri,
+      });
+
+      jest.spyOn(OAuthService, 'exchangeCodeForGoogleProfile').mockResolvedValueOnce({
+        googleId: 'google-sub-prod-999',
+        email: 'prod-user@brandguard.ai',
+        name: 'Production Google User',
+        emailVerified: true,
+      });
+
+      const res = await request(app)
+        .post('/api/auth/oauth/google/callback')
+        .send({
+          code: 'valid-prod-auth-code',
+          codeVerifier,
+          state,
+          redirectUri: prodRedirectUri,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.token).toBeDefined();
+      expect(res.body.data.user.email).toBe('prod-user@brandguard.ai');
     });
 
     it('blocks unauthenticated automatic merging when email belongs to existing password user', async () => {
