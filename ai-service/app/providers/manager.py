@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from app.providers.base import BaseAIProvider
 from app.providers.gemini_provider import GeminiProvider
+from app.providers.groq_provider import GroqProvider
 from app.providers.openai_provider import OpenAIProvider
 from app.rag.retriever import HybridRetriever
 from app.models.schemas import ReviewResponse
@@ -64,9 +65,14 @@ class ProviderManager:
                 api_key=settings.AI_PRIMARY_API_KEY
             )
 
-        # Initialize Fallback Provider
-        if settings.AI_FALLBACK_PROVIDER.lower() == "openai":
-            self.fallback: BaseAIProvider = OpenAIProvider(
+        # Initialize Fallback Provider (Groq Llama is the designated fallback provider)
+        if settings.AI_FALLBACK_PROVIDER.lower() == "groq":
+            self.fallback: BaseAIProvider = GroqProvider(
+                model_name=settings.AI_FALLBACK_MODEL,
+                api_key=settings.AI_FALLBACK_API_KEY
+            )
+        elif settings.AI_FALLBACK_PROVIDER.lower() == "openai":
+            self.fallback = OpenAIProvider(
                 model_name=settings.AI_FALLBACK_MODEL,
                 api_key=settings.AI_FALLBACK_API_KEY
             )
@@ -76,8 +82,8 @@ class ProviderManager:
                 api_key=settings.AI_FALLBACK_API_KEY
             )
         else:
-            self.fallback = OpenAIProvider(
-                model_name="gpt-4o-mini",
+            self.fallback = GroqProvider(
+                model_name="llama-3.3-70b-versatile",
                 api_key=settings.AI_FALLBACK_API_KEY
             )
 

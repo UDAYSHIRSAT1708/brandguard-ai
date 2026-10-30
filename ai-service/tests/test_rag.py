@@ -146,3 +146,40 @@ def test_rag_retriever_handles_chunked_long_guideline():
     first_result = results[0]
     assert first_result.get("parent_id") == "src_long_guideline_01" or first_result.get("id") == "src_long_guideline_01"
     assert "unbeatable" in first_result.get("content", "").lower()
+
+def test_rag_preserves_page_numbers_and_source_metadata():
+    retriever = HybridRetriever(min_relevance_score=0.1)
+
+    pdf_multi_page = """
+[Page 1]
+Introductory brand summary and visual identity guidelines.
+
+[Page 2]
+Legal claim requirements: All claims stating 50% faster must reference the 2026 SysBench certification report.
+"""
+
+    sources = [
+        {
+            "id": "src_pdf_guide",
+            "organisation_id": "org_meta_test",
+            "title": "2026 Brand Guideline PDF",
+            "sourceType": "guideline",
+            "status": "approved",
+            "content": pdf_multi_page,
+            "fileName": "brand_guidelines_2026.pdf",
+            "sourceUrl": "https://brand.acme.com/docs/guidelines.pdf",
+        }
+    ]
+
+    results = retriever.retrieve_evidence(
+        query="Our product runs 50% faster than previous models.",
+        sources=sources,
+        organisation_id="org_meta_test",
+    )
+
+    assert len(results) > 0
+    matched_chunk = results[0]
+    assert matched_chunk["file_name"] == "brand_guidelines_2026.pdf"
+    assert matched_chunk["source_url"] == "https://brand.acme.com/docs/guidelines.pdf"
+    assert matched_chunk["page_number"] == 2
+    assert "50% faster" in matched_chunk["content"]

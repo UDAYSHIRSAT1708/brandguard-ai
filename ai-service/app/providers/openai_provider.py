@@ -129,6 +129,70 @@ class OpenAIProvider(BaseAIProvider):
                 "error": f"Network unreachable: {type(e).__name__}"
             }
 
+    async def test_generation(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        """
+        Executes a controlled, minimal live generation test without mock data.
+        Returns sanitized metrics and verification status.
+        """
+        if not self.is_configured() or not self.client:
+            return {
+                "success": False,
+                "latency_ms": None,
+                "model": self.model_name,
+                "sample_output": None,
+                "error": "OpenAI credentials unconfigured (valid sk-... API key required)",
+                "error_category": "AUTH_UNCONFIGURED"
+            }
+
+        start = time.time()
+        try:
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "user", "content": "Respond with the exact single word: OPERATIONAL"}
+                    ],
+                    max_tokens=10,
+                    timeout=float(timeout_seconds),
+                ),
+                timeout=float(timeout_seconds)
+            )
+            elapsed_ms = int((time.time() - start) * 1000)
+            text_out = (response.choices[0].message.content or "").strip()
+            return {
+                "success": True,
+                "latency_ms": elapsed_ms,
+                "model": self.model_name,
+                "sample_output": text_out[:50],
+                "error": None,
+                "error_category": None
+            }
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "latency_ms": int((time.time() - start) * 1000),
+                "model": self.model_name,
+                "sample_output": None,
+                "error": f"Generation timed out after {timeout_seconds}s",
+                "error_category": "TIMEOUT_GATEWAY_504"
+            }
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            err_str = str(e)
+            category = "UPSTREAM_500"
+            if "429" in err_str or "rate limit" in err_str.lower():
+                category = "RATE_LIMIT_429"
+            elif "401" in err_str or "403" in err_str:
+                category = "AUTH_REJECTED_401"
+            return {
+                "success": False,
+                "latency_ms": elapsed_ms,
+                "model": self.model_name,
+                "sample_output": None,
+                "error": f"Generation failed: {type(e).__name__}",
+                "error_category": category
+            }
+
     async def analyze_content(
         self,
         content_id: str,

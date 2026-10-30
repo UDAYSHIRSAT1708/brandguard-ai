@@ -46,7 +46,7 @@ export const isDemoAllowed = Boolean(
   (import.meta.env.VITE_ENABLE_DEMO_ACCOUNTS === 'true' || import.meta.env.VITE_ENABLE_DEMO_ACCOUNTS === '1')
 );
 
-export const DEMO_CREDENTIALS: Record<UserRole, { email: string; password: string }> = {
+export const DEMO_CREDENTIALS: Partial<Record<UserRole, { email: string; password: string }>> = {
   admin: { email: 'admin@acme-demo.com', password: 'DemoAdmin2026!' },
   creator: { email: 'creator@acme-demo.com', password: 'DemoCreator2026!' },
   reviewer: { email: 'reviewer@acme-demo.com', password: 'DemoReviewer2026!' },

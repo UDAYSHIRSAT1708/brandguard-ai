@@ -116,6 +116,64 @@ class GeminiProvider(BaseAIProvider):
                 "error": f"Network unreachable: {type(e).__name__}"
             }
 
+    async def test_generation(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        """
+        Executes a controlled, minimal live generation test without mock data.
+        Returns sanitized metrics and verification status.
+        """
+        if not self.is_configured():
+            return {
+                "success": False,
+                "latency_ms": None,
+                "model": self.model_name,
+                "sample_output": None,
+                "error": "Gemini API credentials unconfigured",
+                "error_category": "AUTH_UNCONFIGURED"
+            }
+
+        start = time.time()
+        try:
+            model = genai.GenerativeModel(self.model_name)
+            response = await asyncio.wait_for(
+                model.generate_content_async("Respond with the exact single word: OPERATIONAL"),
+                timeout=timeout_seconds
+            )
+            elapsed_ms = int((time.time() - start) * 1000)
+            text_out = (response.text or "").strip()
+            return {
+                "success": True,
+                "latency_ms": elapsed_ms,
+                "model": self.model_name,
+                "sample_output": text_out[:50],
+                "error": None,
+                "error_category": None
+            }
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "latency_ms": int((time.time() - start) * 1000),
+                "model": self.model_name,
+                "sample_output": None,
+                "error": f"Generation timed out after {timeout_seconds}s",
+                "error_category": "TIMEOUT_GATEWAY_504"
+            }
+        except Exception as e:
+            elapsed_ms = int((time.time() - start) * 1000)
+            err_str = str(e)
+            category = "UPSTREAM_500"
+            if "429" in err_str or "quota" in err_str.lower() or "resource_exhausted" in err_str.lower():
+                category = "RATE_LIMIT_429"
+            elif "401" in err_str or "403" in err_str or "key" in err_str.lower():
+                category = "AUTH_REJECTED_401"
+            return {
+                "success": False,
+                "latency_ms": elapsed_ms,
+                "model": self.model_name,
+                "sample_output": None,
+                "error": f"Generation failed: {type(e).__name__}",
+                "error_category": category
+            }
+
     async def analyze_content(
         self,
         content_id: str,
@@ -131,10 +189,20 @@ class GeminiProvider(BaseAIProvider):
         start_time = time.time()
 
         if evidence:
-            evidence_str = "\n".join([
-                f"<source id='{e.get('id', 'src')}'>\nTitle: {e.get('title')}\nType: {e.get('sourceType')}\nContent: {e.get('content')}\n</source>"
-                for e in evidence
-            ])
+            evidence_lines = []
+            for e in evidence:
+                meta_parts = []
+                if e.get("file_name"):
+                    meta_parts.append(f"File: {e['file_name']}")
+                if e.get("page_number"):
+                    meta_parts.append(f"Page: {e['page_number']}")
+                if e.get("source_url"):
+                    meta_parts.append(f"URL: {e['source_url']}")
+                meta_tag = f" ({', '.join(meta_parts)})" if meta_parts else ""
+                evidence_lines.append(
+                    f"<source id='{e.get('id', 'src')}'>\nTitle: {e.get('title')}{meta_tag}\nType: {e.get('sourceType')}\nContent: {e.get('content')}\n</source>"
+                )
+            evidence_str = "\n".join(evidence_lines)
         else:
             evidence_str = "No specific brand guidelines were retrieved for this content query."
 

@@ -293,7 +293,8 @@ export class OAuthService {
         throw err;
       }
 
-      const token = AuthService.generateToken(existingGoogleUser);
+      const isOwner = Boolean(existingGoogleUser.role === 'owner' || (org.ownerId && org.ownerId.toString() === existingGoogleUser._id.toString()));
+      const token = AuthService.generateToken(existingGoogleUser, isOwner);
       const refreshToken = AuthService.generateRefreshToken(existingGoogleUser);
 
       await logAuditEvent({
@@ -323,7 +324,8 @@ export class OAuthService {
         const org = await Organisation.findById(existingEmailUser.organisationId);
         if (!org) throw new Error('Associated organisation not found');
 
-        const token = AuthService.generateToken(existingEmailUser);
+        const isOwner = Boolean(existingEmailUser.role === 'owner' || (org.ownerId && org.ownerId.toString() === existingEmailUser._id.toString()));
+        const token = AuthService.generateToken(existingEmailUser, isOwner);
         const refreshToken = AuthService.generateRefreshToken(existingEmailUser);
 
         await logAuditEvent({
@@ -384,7 +386,11 @@ export class OAuthService {
         active: true,
       });
 
-      const token = AuthService.generateToken(newUser);
+      // Bind administrator as organisation owner
+      org.ownerId = newUser._id;
+      await org.save();
+
+      const token = AuthService.generateToken(newUser, true);
       const refreshToken = AuthService.generateRefreshToken(newUser);
 
       await logAuditEvent({

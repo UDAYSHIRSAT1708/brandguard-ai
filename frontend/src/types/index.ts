@@ -1,16 +1,42 @@
-export type UserRole = 'admin' | 'creator' | 'reviewer';
+export type UserRole = 'owner' | 'admin' | 'brand_manager' | 'editor' | 'reviewer' | 'viewer' | 'creator';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   role: UserRole;
+  permissions?: string[];
+  isOwner?: boolean;
   authProvider?: 'local' | 'google';
   isGoogleLinked?: boolean;
   avatarUrl?: string;
   organisationId: string;
   organisationName?: string;
   organisationSlug?: string;
+}
+
+export interface OrgMember {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  permissions: string[];
+  isOwner: boolean;
+  avatarUrl?: string;
+  authProvider?: string;
+  isGoogleLinked?: boolean;
+  createdAt: string;
+}
+
+export interface OrgInvitation {
+  _id: string;
+  email: string;
+  role: UserRole;
+  permissions: string[];
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  expiresAt: string;
+  invitedBy?: { name: string; email: string };
+  createdAt: string;
 }
 
 export type ContentType = 'website' | 'social' | 'email' | 'press_release' | 'advertisement';

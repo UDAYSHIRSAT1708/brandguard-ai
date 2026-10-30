@@ -33,6 +33,10 @@ app.include_router(health_router, tags=["Health"])
 from app.api.review import router as review_router
 app.include_router(review_router, prefix="/api", tags=["Review"])
 
+# Deep Diagnostics Router
+from app.api.diagnostics import router as diagnostics_router
+app.include_router(diagnostics_router, tags=["Diagnostics"])
+
 # Protected internal verification endpoint
 @app.get("/api/v1/verify-auth", dependencies=[Depends(verify_internal_api_key)], tags=["Internal"])
 async def verify_auth():

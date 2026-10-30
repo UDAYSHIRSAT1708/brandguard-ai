@@ -136,6 +136,7 @@ app.use('/health', healthRouter);
 
 // Domain Routes
 import authRouter from './routes/auth.routes';
+import organisationRouter from './routes/organisation.routes';
 import knowledgeRouter from './routes/knowledge.routes';
 import contentRouter from './routes/content.routes';
 import approvalRouter from './routes/approval.routes';
@@ -143,6 +144,7 @@ import auditRouter from './routes/audit.routes';
 import analyticsRouter from './routes/analytics.routes';
 
 app.use('/api/auth', authRouter);
+app.use('/api/organisations', organisationRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/approvals', approvalRouter);

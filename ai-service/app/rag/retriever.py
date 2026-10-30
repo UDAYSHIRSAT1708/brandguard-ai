@@ -1,3 +1,4 @@
+import re
 import datetime
 from typing import List, Dict, Any, Optional
 from app.rag.embedder import VectorEmbedder
@@ -85,7 +86,15 @@ class HybridRetriever:
             if not chunks:
                 continue
 
+            file_name = src.get("fileName") or src.get("file_name") or src.get("metadata", {}).get("fileName")
+            source_url = src.get("sourceUrl") or src.get("source_url") or src.get("metadata", {}).get("sourceUrl")
+            meta = src.get("metadata") or {}
+
             for idx, chunk_text in enumerate(chunks):
+                # Detect page number tag if present (e.g. [Page 4])
+                page_match = re.search(r"\[Page\s+(\d+)\]", chunk_text)
+                detected_page = int(page_match.group(1)) if page_match else (src.get("pageNumber") or src.get("page_number"))
+
                 chunked_units.append({
                     "id": f"{parent_id}#chunk_{idx}" if len(chunks) > 1 else parent_id,
                     "parent_id": parent_id,
@@ -94,6 +103,10 @@ class HybridRetriever:
                     "content": chunk_text,
                     "productScope": src.get("productScope", "Global"),
                     "organisation_id": src.get("organisation_id"),
+                    "page_number": detected_page,
+                    "file_name": file_name,
+                    "source_url": source_url,
+                    "metadata": meta,
                 })
 
         return chunked_units

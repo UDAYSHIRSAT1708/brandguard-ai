@@ -7,7 +7,10 @@ import {
   Recommendation,
   ReviewJob,
   DashboardMetrics, 
-  ReviewResult 
+  ReviewResult,
+  OrgMember,
+  OrgInvitation,
+  UserRole
 } from '../types';
 
 export const BrandGuardApi = {
@@ -19,6 +22,22 @@ export const BrandGuardApi = {
       return { live: true, details: res.data };
     } catch {
       return { live: false };
+    }
+  },
+
+  // 1b. Deep Production Diagnostic Suite (Authenticated 5-Tier Verification)
+  async runDeepDiagnostics(): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const res = await apiClient.post('/health/diagnostics', {}, { timeout: 20000 });
+      if (res.data?.success && res.data?.data) {
+        return { success: true, data: res.data.data };
+      }
+      return { success: false, error: res.data?.error?.message || 'Deep diagnostics failed.' };
+    } catch (err: any) {
+      return { 
+        success: false, 
+        error: err.response?.data?.error?.message || err.message || 'Diagnostic request failed.' 
+      };
     }
   },
 
@@ -221,7 +240,7 @@ export const BrandGuardApi = {
           reviewResult: {
             findings: mappedFindings,
             recommendations: mappedRecommendations,
-            providerUsed: rr.provider || (simulateFailover ? 'OpenAI GPT-4o-mini (Failover)' : 'Google Gemini 2.0 Flash (Primary)'),
+            providerUsed: rr.provider || (simulateFailover ? 'Groq Llama 3.3 (Failover)' : 'Google Gemini 2.0 Flash (Primary)'),
             isDemoFallback: false,
             latencyMs: rr.latencyMs || rr.latency_ms,
           },
@@ -464,5 +483,105 @@ export const BrandGuardApi = {
     if (!res.data?.success) {
       throw new Error(res.data?.error?.message || 'Failed to persist finding resolution.');
     }
+  },
+
+  // 17. Organisation Details & Settings
+  async getOrganisationDetails(): Promise<any> {
+    const res = await apiClient.get('/organisations/current');
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to retrieve organisation details.');
+  },
+
+  async updateOrganisationSettings(updates: { name?: string; settings?: Record<string, any> }): Promise<any> {
+    const res = await apiClient.patch('/organisations/current', updates);
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to update organisation settings.');
+  },
+
+  // 18. Members Management
+  async getMembers(): Promise<OrgMember[]> {
+    const res = await apiClient.get('/organisations/members');
+    if (res.data?.success && Array.isArray(res.data.data?.members)) {
+      return res.data.data.members;
+    }
+    return [];
+  },
+
+  async updateMemberRole(userId: string, role: UserRole, permissions?: string[]): Promise<any> {
+    const res = await apiClient.patch(`/organisations/members/${userId}`, { role, permissions });
+    if (res.data?.success && res.data.data) {
+      return res.data.data.member;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to update member role.');
+  },
+
+  async removeMember(userId: string): Promise<void> {
+    const res = await apiClient.delete(`/organisations/members/${userId}`);
+    if (!res.data?.success) {
+      throw new Error(res.data?.error?.message || 'Failed to remove member.');
+    }
+  },
+
+  async transferOwnership(newOwnerId: string): Promise<any> {
+    const res = await apiClient.post('/organisations/transfer-ownership', {
+      newOwnerId,
+      confirmation: 'CONFIRM_TRANSFER',
+    });
+    if (res.data?.success) {
+      return res.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to transfer ownership.');
+  },
+
+  // 19. Invitations
+  async getInvitations(): Promise<OrgInvitation[]> {
+    const res = await apiClient.get('/organisations/invitations');
+    if (res.data?.success && Array.isArray(res.data.data?.invitations)) {
+      return res.data.data.invitations;
+    }
+    return [];
+  },
+
+  async createInvitation(email: string, role: UserRole, permissions?: string[]): Promise<any> {
+    const res = await apiClient.post('/organisations/invitations', { email, role, permissions });
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to create invitation.');
+  },
+
+  async revokeInvitation(invitationId: string): Promise<void> {
+    const res = await apiClient.delete(`/organisations/invitations/${invitationId}`);
+    if (!res.data?.success) {
+      throw new Error(res.data?.error?.message || 'Failed to revoke invitation.');
+    }
+  },
+
+  async resendInvitation(invitationId: string): Promise<any> {
+    const res = await apiClient.post(`/organisations/invitations/${invitationId}/resend`);
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to resend invitation.');
+  },
+
+  async verifyInvitation(token: string): Promise<any> {
+    const res = await apiClient.get('/organisations/invitations/verify', { params: { token } });
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Invalid or expired invitation token.');
+  },
+
+  async acceptInvitation(payload: { token: string; name?: string; password?: string }): Promise<any> {
+    const res = await apiClient.post('/organisations/invitations/accept', payload);
+    if (res.data?.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data?.error?.message || 'Failed to accept invitation.');
   },
 };

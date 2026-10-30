@@ -43,7 +43,13 @@ export const LoginPage: React.FC = () => {
   const [adminPassword, setAdminPassword] = useState('');
 
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<'login' | 'register' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Helper to determine the canonical OAuth redirect URI
+  const getOAuthRedirectUri = () => {
+    return `${window.location.origin}/login`;
+  };
 
   // Auto-generate slug when org name changes if slug wasn't manually typed
   const handleOrgNameChange = (name: string) => {
@@ -68,6 +74,8 @@ export const LoginPage: React.FC = () => {
       window.history.replaceState({}, document.title, window.location.pathname);
       if (oauthError === 'access_denied') {
         setErrorMessage('Google Sign-In was cancelled. You may sign in with your password or try again.');
+      } else if (oauthError === 'unverified_email') {
+        setErrorMessage('Your Google account email has not been verified by Google. Please verify your email with Google and try again.');
       } else {
         setErrorMessage(`Google authentication returned: ${oauthError}`);
       }
@@ -80,8 +88,9 @@ export const LoginPage: React.FC = () => {
       const storedIntent = sessionStorage.getItem('brandguard_oauth_intent') || 'login';
       const storedOrgName = sessionStorage.getItem('brandguard_oauth_org_name') || undefined;
       const storedOrgSlug = sessionStorage.getItem('brandguard_oauth_org_slug') || undefined;
+      const storedRedirectUri = sessionStorage.getItem('brandguard_oauth_redirect_uri') || getOAuthRedirectUri();
 
-      // Clean browser address bar query parameters
+      // Clean browser address bar query parameters to avoid re-triggering on refresh
       window.history.replaceState({}, document.title, window.location.pathname);
 
       if (!oauthState || !storedState || oauthState !== storedState) {
@@ -94,14 +103,15 @@ export const LoginPage: React.FC = () => {
         return;
       }
 
-      // Cleanup session storage
+      // Cleanup session storage tokens
       sessionStorage.removeItem('brandguard_oauth_verifier');
       sessionStorage.removeItem('brandguard_oauth_state');
       sessionStorage.removeItem('brandguard_oauth_intent');
       sessionStorage.removeItem('brandguard_oauth_org_name');
       sessionStorage.removeItem('brandguard_oauth_org_slug');
+      sessionStorage.removeItem('brandguard_oauth_redirect_uri');
 
-      const redirectUri = `${window.location.origin}/login`;
+      const redirectUri = storedRedirectUri;
 
       setLoading(true);
       clearSessionExpiredNotice();
@@ -117,7 +127,14 @@ export const LoginPage: React.FC = () => {
         }).then((result) => {
           setLoading(false);
           if (!result.success) {
-            setErrorMessage(result.error || 'Google organization registration failed.');
+            if (result.errorCode === 'ORGANISATION_SLUG_TAKEN' || result.error?.includes('slug already exists')) {
+              setErrorMessage('An organization with this workspace URL slug already exists. Please choose a different slug.');
+            } else if (result.errorCode === 'ACCOUNT_EXISTS_PASSWORD' || result.error?.includes('already exists')) {
+              setMode('login');
+              setErrorMessage('An account with this email already exists. Please sign in with your password or use Google Sign-In.');
+            } else {
+              setErrorMessage(result.error || 'Google organization registration failed.');
+            }
           }
         });
       } else {
@@ -150,13 +167,14 @@ export const LoginPage: React.FC = () => {
   // Initiate PKCE Google Sign-In
   const handleGoogleSignIn = async () => {
     setLoading(true);
+    setOauthLoading('login');
     setErrorMessage(null);
     clearSessionExpiredNotice();
 
     try {
       const codeVerifier = generateRandomString(64);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const redirectUri = `${window.location.origin}/login`;
+      const redirectUri = getOAuthRedirectUri();
 
       const res = await apiClient.get('/auth/oauth/google/init', {
         params: {
@@ -170,6 +188,7 @@ export const LoginPage: React.FC = () => {
         sessionStorage.setItem('brandguard_oauth_verifier', codeVerifier);
         sessionStorage.setItem('brandguard_oauth_state', res.data.data.state);
         sessionStorage.setItem('brandguard_oauth_intent', 'login');
+        sessionStorage.setItem('brandguard_oauth_redirect_uri', redirectUri);
         window.location.href = res.data.data.authUrl;
       } else {
         throw new Error('Failed to retrieve authorization endpoint from server.');
@@ -177,6 +196,7 @@ export const LoginPage: React.FC = () => {
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to initialize Google Sign-In.');
       setLoading(false);
+      setOauthLoading(null);
     }
   };
 
@@ -184,18 +204,19 @@ export const LoginPage: React.FC = () => {
   const handleGoogleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgName.trim() || !orgSlug.trim()) {
-      setErrorMessage('Please provide both Organization Title and Workspace Slug.');
+      setErrorMessage('Please provide both Organization Title and Workspace Slug before continuing with Google.');
       return;
     }
 
     setLoading(true);
+    setOauthLoading('register');
     setErrorMessage(null);
     clearSessionExpiredNotice();
 
     try {
       const codeVerifier = generateRandomString(64);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const redirectUri = `${window.location.origin}/login`;
+      const redirectUri = getOAuthRedirectUri();
 
       const res = await apiClient.get('/auth/oauth/google/init', {
         params: {
@@ -211,6 +232,7 @@ export const LoginPage: React.FC = () => {
         sessionStorage.setItem('brandguard_oauth_intent', 'register');
         sessionStorage.setItem('brandguard_oauth_org_name', orgName.trim());
         sessionStorage.setItem('brandguard_oauth_org_slug', orgSlug.trim().toLowerCase());
+        sessionStorage.setItem('brandguard_oauth_redirect_uri', redirectUri);
         window.location.href = res.data.data.authUrl;
       } else {
         throw new Error('Failed to retrieve authorization endpoint from server.');
@@ -218,6 +240,7 @@ export const LoginPage: React.FC = () => {
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to initialize Google registration.');
       setLoading(false);
+      setOauthLoading(null);
     }
   };
 
@@ -368,27 +391,37 @@ export const LoginPage: React.FC = () => {
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={loading}
-                className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-800 rounded-xl text-xs font-semibold border border-ink-200 shadow-sm transition-all duration-150 disabled:opacity-50 cursor-pointer"
+                aria-label="Continue with Google"
+                className="w-full min-h-[44px] flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-900 rounded-xl text-xs sm:text-sm font-semibold border border-ink-200 hover:border-ink-400 shadow-subtle hover:shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus:outline-none focus:ring-2 focus:ring-forest focus:ring-offset-1"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                  />
-                </svg>
-                <span>Continue with Google</span>
+                {oauthLoading === 'login' ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-forest flex-shrink-0" />
+                    <span>Connecting to Google...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                      />
+                    </svg>
+                    <span>Continue with Google</span>
+                  </>
+                )}
               </button>
 
               <div className="relative my-3">
@@ -526,28 +559,38 @@ export const LoginPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleGoogleRegister}
-                    disabled={loading || !orgName.trim() || !orgSlug.trim()}
-                    className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-800 rounded-xl text-xs font-semibold border border-ink-200 shadow-sm transition-all duration-150 disabled:opacity-50 cursor-pointer"
+                    disabled={loading}
+                    aria-label="Register Workspace with Google"
+                    className="w-full min-h-[44px] flex items-center justify-center space-x-3 py-2.5 px-4 bg-white hover:bg-canvas text-ink-900 rounded-xl text-xs sm:text-sm font-semibold border border-ink-200 hover:border-ink-400 shadow-subtle hover:shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus:outline-none focus:ring-2 focus:ring-forest focus:ring-offset-1"
                   >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                      />
-                    </svg>
-                    <span>Register Workspace with Google</span>
+                    {oauthLoading === 'register' ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-forest flex-shrink-0" />
+                        <span>Connecting to Google...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            fill="#4285F4"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="#34A853"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="#FBBC05"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                          />
+                          <path
+                            fill="#EA4335"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                        <span>Register Workspace with Google</span>
+                      </>
+                    )}
                   </button>
 
                   <div className="relative my-3">

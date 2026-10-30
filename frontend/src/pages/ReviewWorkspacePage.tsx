@@ -214,7 +214,7 @@ export const ReviewWorkspacePage: React.FC<ReviewWorkspaceProps> = ({
       // 2. Invoke real backend review pipeline with client idempotency key
       setReviewStep(
         simulateFailover 
-          ? '2/2: Submitting review -> simulating primary timeout with OpenAI failover...' 
+          ? '2/2: Submitting review -> simulating primary timeout with Groq failover...' 
           : '2/2: Grounding claims with RAG against approved guidelines & benchmark facts...'
       );
 
@@ -428,7 +428,7 @@ export const ReviewWorkspacePage: React.FC<ReviewWorkspaceProps> = ({
         <div className="flex items-center space-x-2.5">
           <span className="font-bold text-ink-900 font-mono">Autonomous Failover Mode:</span>
           <span className="text-ink-600 font-sans">
-            Simulate primary Gemini provider failure/timeout to verify OpenAI failover
+            Simulate primary Gemini provider failure/timeout to verify Groq failover
           </span>
         </div>
         <label className="flex items-center space-x-2 cursor-pointer self-start sm:self-auto">

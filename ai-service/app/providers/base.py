@@ -40,3 +40,18 @@ class BaseAIProvider(ABC):
         }
         """
         pass
+
+    @abstractmethod
+    async def test_generation(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        """
+        Executes a controlled, minimal live generation test without mock data.
+        Returns: {
+            "success": bool,
+            "latency_ms": Optional[int],
+            "model": str,
+            "sample_output": Optional[str],
+            "error": Optional[str],
+            "error_category": Optional[str]
+        }
+        """
+        pass

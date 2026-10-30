@@ -7,6 +7,10 @@ import {
   Users, 
   ShieldCheck,
   CheckCircle2,
+  XCircle,
+  Activity,
+  Sparkles,
+  Layers,
   UserPlus,
   X,
   Mail,
@@ -30,6 +34,28 @@ export const SettingsHealthPage: React.FC = () => {
   const [addRole, setAddRole] = useState<'admin' | 'creator' | 'reviewer'>('creator');
   const [addingUser, setAddingUser] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Phase 1 Deep Production Diagnostics state
+  const [diagnosticReport, setDiagnosticReport] = useState<any>(null);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+
+  const handleRunDeepDiagnostics = async () => {
+    setRunningDiagnostics(true);
+    setDiagnosticError(null);
+    try {
+      const res = await BrandGuardApi.runDeepDiagnostics();
+      if (res.success && res.data) {
+        setDiagnosticReport(res.data);
+      } else {
+        setDiagnosticError(res.error || 'Failed to complete deep diagnostics.');
+      }
+    } catch (err: any) {
+      setDiagnosticError(err.message || 'Error executing deep diagnostics.');
+    } finally {
+      setRunningDiagnostics(false);
+    }
+  };
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,7 +146,7 @@ export const SettingsHealthPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-3">
           {lastTested && (
             <span className="text-xs font-mono text-ink-500">Last Probed: {lastTested}</span>
           )}
@@ -131,10 +157,178 @@ export const SettingsHealthPage: React.FC = () => {
             loading={loading}
             icon={<RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />}
           >
-            Run Mesh Diagnostic
+            Light Probe
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={handleRunDeepDiagnostics}
+            loading={runningDiagnostics}
+            icon={<Sparkles className="w-3.5 h-3.5" />}
+          >
+            Run 5-Tier Diagnostics
           </Button>
         </div>
       </div>
+
+      {/* Deep Production Diagnostics Report (Phase 1) */}
+      {diagnosticError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-start space-x-3">
+          <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold font-sans">Diagnostic Probe Failed: </span>
+            {diagnosticError}
+          </div>
+        </div>
+      )}
+
+      {diagnosticReport && (
+        <div className="bg-surface rounded-2xl border border-ink-200 p-6 shadow-card space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-ink-100 gap-3">
+            <div className="flex items-center space-x-3">
+              <div className="w-9 h-9 rounded-xl bg-forest-50 text-forest border border-forest/20 flex items-center justify-center">
+                <Activity className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-ink-900 font-sans">
+                  Deep Production Diagnostic Report
+                </h4>
+                <p className="text-xs text-ink-500 font-mono">
+                  Timestamp: {new Date(diagnosticReport.timestamp).toLocaleString()} ({diagnosticReport.elapsedMs}ms total)
+                </p>
+              </div>
+            </div>
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-mono font-bold border inline-flex items-center ${
+                diagnosticReport.overallStatus === 'healthy'
+                  ? 'bg-forest-50 text-forest border-forest/30'
+                  : diagnosticReport.overallStatus === 'degraded'
+                  ? 'bg-amberBrand-50 text-amberBrand-dark border-amberBrand/30'
+                  : 'bg-red-50 text-red-600 border-red-200'
+              }`}
+            >
+              Overall Posture: {diagnosticReport.overallStatus.toUpperCase()}
+            </span>
+          </div>
+
+          {/* 5-Tier Verification Checklist */}
+          <div>
+            <h5 className="text-xs font-mono uppercase tracking-wider text-ink-500 font-bold mb-3 flex items-center">
+              <Layers className="w-3.5 h-3.5 mr-1.5 text-forest" />
+              Five-Tier Operational Verification
+            </h5>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+              {[
+                { label: '1. Service Reachable', ok: diagnosticReport.tiers?.serviceReachable, sub: 'Sockets & Gateway' },
+                { label: '2. Credentials Configured', ok: diagnosticReport.tiers?.credentialsConfigured, sub: 'Format & Masking' },
+                { label: '3. Auth Verified', ok: diagnosticReport.tiers?.providerAuthVerified, sub: 'API Token Handshake' },
+                { label: '4. Generation Verified', ok: diagnosticReport.tiers?.modelGenerationVerified, sub: 'Live Non-Mock Test' },
+                { label: '5. End-to-End Verified', ok: diagnosticReport.tiers?.endToEndVerified, sub: 'RAG Grounding & Async' },
+              ].map((tier, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3 rounded-xl border flex flex-col justify-between ${
+                    tier.ok
+                      ? 'bg-forest-50/50 border-forest/20 text-ink-900'
+                      : 'bg-red-50/50 border-red-200 text-ink-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold font-sans">{tier.label}</span>
+                    {tier.ok ? (
+                      <CheckCircle2 className="w-4 h-4 text-forest flex-shrink-0" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                    )}
+                  </div>
+                  <span className="text-[10px] font-mono text-ink-500">{tier.sub}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Component Metrics Details */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-sans">
+            {/* Database & Pipeline */}
+            <div className="p-3.5 bg-canvas rounded-xl border border-ink-100 space-y-2">
+              <div className="font-bold text-ink-900 flex items-center">
+                <Database className="w-3.5 h-3.5 mr-1.5 text-forest" />
+                MongoDB Atlas & Async Pipeline
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">DB ReadyState:</span>
+                <span className="font-mono font-bold text-ink-800">
+                  {diagnosticReport.components?.database?.readyState === 1 ? 'Connected (1)' : 'Offline'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">Ping Latency:</span>
+                <span className="font-mono font-bold text-ink-800">
+                  {diagnosticReport.components?.database?.pingLatencyMs ?? 'N/A'}ms
+                </span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-ink-500">Active Jobs In Flight:</span>
+                <span className="font-mono font-bold text-ink-800">
+                  {diagnosticReport.components?.reviewJobPipeline?.activeJobsInFlight ?? 0}
+                </span>
+              </div>
+            </div>
+
+            {/* RAG Retrieval Engine */}
+            <div className="p-3.5 bg-canvas rounded-xl border border-ink-100 space-y-2">
+              <div className="font-bold text-ink-900 flex items-center">
+                <Cpu className="w-3.5 h-3.5 mr-1.5 text-forest" />
+                RAG Retrieval & Isolation
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">Tenant Isolation:</span>
+                <span className="font-mono font-bold text-forest">
+                  {diagnosticReport.components?.aiService?.rag_retrieval?.tenant_isolation_verified ? 'Enforced' : 'Unverified'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">Approval Filter:</span>
+                <span className="font-mono font-bold text-forest">
+                  {diagnosticReport.components?.aiService?.rag_retrieval?.approval_status_filter_verified ? 'Verified' : 'Unverified'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-ink-500">Retrieval Latency:</span>
+                <span className="font-mono font-bold text-ink-800">
+                  {diagnosticReport.components?.aiService?.rag_retrieval?.latency_ms ?? 'N/A'}ms
+                </span>
+              </div>
+            </div>
+
+            {/* Autonomous Failover Simulation */}
+            <div className="p-3.5 bg-canvas rounded-xl border border-ink-100 space-y-2">
+              <div className="font-bold text-ink-900 flex items-center">
+                <Server className="w-3.5 h-3.5 mr-1.5 text-forest" />
+                Failover Simulation (Gemini → Groq)
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">Failover Mechanism:</span>
+                <span className="font-mono font-bold text-forest">
+                  {diagnosticReport.components?.aiService?.failover_simulation?.failover_verified ? 'Verified' : 'Failed'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-ink-200/50">
+                <span className="text-ink-500">Designated Fallback:</span>
+                <span className="font-mono font-bold text-ink-800 uppercase">
+                  {diagnosticReport.components?.aiService?.failover_simulation?.fallback_provider || 'GROQ'}
+                </span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-ink-500">Failover Switch Latency:</span>
+                <span className="font-mono font-bold text-ink-800">
+                  {diagnosticReport.components?.aiService?.failover_simulation?.latency_ms ?? 'N/A'}ms
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Provider Health Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -230,11 +424,11 @@ export const SettingsHealthPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-xl bg-amberBrand-50 text-amberBrand border border-amberBrand/20 flex items-center justify-center font-bold text-lg font-mono">
-                    {fallback?.provider ? fallback.provider.charAt(0).toUpperCase() : 'O'}
+                    {fallback?.provider ? fallback.provider.charAt(0).toUpperCase() : 'G'}
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-ink-900 font-sans">
-                      {fallback?.provider ? fallback.provider.toUpperCase() : 'OpenAI'} ({fallback?.model || 'gpt-4o-mini'})
+                      {fallback?.provider ? fallback.provider.toUpperCase() : 'GROQ'} ({fallback?.model || 'llama-3.3-70b-versatile'})
                     </h4>
                     <p className="text-xs text-ink-500 font-mono">Autonomous Failover Target</p>
                   </div>

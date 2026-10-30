@@ -79,8 +79,8 @@ describe('Phase 6: End-to-End Content Review & Versioning Pipeline', () => {
         data: {
           review_id: `rev_mock_${Date.now()}`,
           status: 'completed',
-          provider: isFailover ? 'OpenAI GPT-4o-mini (Failover)' : 'Google Gemini 2.0 (Primary)',
-          model: isFailover ? 'gpt-4o-mini' : 'gemini-2.0-flash',
+          provider: isFailover ? 'Groq Llama 3.3 (Failover)' : 'Google Gemini 2.0 (Primary)',
+          model: isFailover ? 'llama-3.3-70b-versatile' : 'gemini-2.0-flash',
           latency_ms: 85,
           retry_count: isFailover ? 1 : 0,
           is_demo_mode: false,

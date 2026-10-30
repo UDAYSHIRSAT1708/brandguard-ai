@@ -12,24 +12,28 @@ class Settings(BaseSettings):
     # Internal Authentication
     AI_SERVICE_API_KEY: str = os.getenv("AI_SERVICE_API_KEY", "brandguard-internal-secret-service-key-12345")
     
-    # Primary AI Provider Configuration
+    # Primary AI Provider Configuration (Google Gemini)
     AI_PRIMARY_PROVIDER: str = os.getenv("AI_PRIMARY_PROVIDER", "gemini")
     AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", "gemini-flash-lite-latest")
     AI_PRIMARY_API_KEY: Optional[str] = (
         os.getenv("AI_PRIMARY_API_KEY") or
         (os.getenv("GEMINI_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "gemini" else None) or
-        (os.getenv("OPENAI_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "openai" else None) or
         (os.getenv("GOOGLE_API_KEY") if os.getenv("AI_PRIMARY_PROVIDER", "gemini").lower() == "gemini" else None)
     )
     
-    # Fallback AI Provider Configuration
-    AI_FALLBACK_PROVIDER: str = os.getenv("AI_FALLBACK_PROVIDER", "openai")
-    AI_FALLBACK_MODEL: str = os.getenv("AI_FALLBACK_MODEL", "gpt-4o-mini")
-    AI_FALLBACK_API_KEY: Optional[str] = (
-        os.getenv("AI_FALLBACK_API_KEY") or
-        (os.getenv("OPENAI_API_KEY") if os.getenv("AI_FALLBACK_PROVIDER", "openai").lower() == "openai" else None) or
-        (os.getenv("GEMINI_API_KEY") if os.getenv("AI_FALLBACK_PROVIDER", "openai").lower() == "gemini" else None)
+    # Fallback AI Provider Configuration (Groq Llama)
+    # Primary: Gemini | Fallback: Groq (Llama-3.3-70b-versatile)
+    AI_FALLBACK_PROVIDER: str = os.getenv("AI_FALLBACK_PROVIDER", "groq")
+    AI_FALLBACK_MODEL: str = (
+        os.getenv("GROQ_MODEL") or
+        os.getenv("AI_FALLBACK_MODEL", "llama-3.3-70b-versatile")
     )
+    AI_FALLBACK_API_KEY: Optional[str] = (
+        os.getenv("GROQ_API_KEY") or
+        os.getenv("AI_FALLBACK_API_KEY")
+    )
+    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     
     # Guardrails and Budgets
     AI_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "30"))

@@ -272,6 +272,10 @@ export class ReviewOrchestratorService {
       productScope: s.productScope,
       organisationId: organisationId.toString(),
       status: s.status || 'approved',
+      metadata: s.metadata || {},
+      fileName: s.metadata?.fileName,
+      sourceUrl: s.metadata?.sourceUrl,
+      format: s.metadata?.format,
     }));
 
     // 4. Invoke AI microservice

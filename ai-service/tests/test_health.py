@@ -13,6 +13,9 @@ def test_health_endpoint():
     assert "providers" in data
     assert "primary" in data["providers"]
     assert "fallback" in data["providers"]
+    assert data["providers"]["primary"]["provider"] == "gemini"
+    assert data["providers"]["fallback"]["provider"] == "groq"
+    assert "llama" in data["providers"]["fallback"]["model"].lower()
     # Ensure raw API keys are never leaked in response
     assert "api_key" not in str(data).lower()
 

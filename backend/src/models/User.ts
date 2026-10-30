@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type UserRole = 'admin' | 'creator' | 'reviewer';
+export type UserRole = 'owner' | 'admin' | 'brand_manager' | 'editor' | 'reviewer' | 'viewer' | 'creator';
 export type AuthProviderType = 'local' | 'google';
 
 export interface IUser extends Document {
@@ -9,6 +9,7 @@ export interface IUser extends Document {
   email: string;
   passwordHash?: string;
   role: UserRole;
+  permissions?: string[];
   authProvider: AuthProviderType;
   googleId?: string;
   avatarUrl?: string;
@@ -26,7 +27,13 @@ const UserSchema = new Schema<IUser>(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: false },
-    role: { type: String, enum: ['admin', 'creator', 'reviewer'], required: true, default: 'creator' },
+    role: { 
+      type: String, 
+      enum: ['owner', 'admin', 'brand_manager', 'editor', 'reviewer', 'viewer', 'creator'], 
+      required: true, 
+      default: 'creator' 
+    },
+    permissions: { type: [String], default: [] },
     authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
     googleId: { type: String },
     avatarUrl: { type: String },

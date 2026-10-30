@@ -73,14 +73,14 @@ async def test_autonomous_provider_failover(sample_evidence):
     # Mock secondary fallback provider to succeed
     mock_fallback = MagicMock(spec=BaseAIProvider)
     mock_fallback.is_configured.return_value = True
-    mock_fallback.provider_name = "openai"
-    mock_fallback.model_name = "gpt-4o-mini"
+    mock_fallback.provider_name = "groq"
+    mock_fallback.model_name = "llama-3.3-70b-versatile"
     mock_fallback.analyze_content = AsyncMock(
         return_value=ReviewResponse(
             review_id="rev_fallback_123",
             status="completed",
-            provider="openai",
-            model="gpt-4o-mini",
+            provider="groq",
+            model="llama-3.3-70b-versatile",
             latency_ms=450,
             retry_count=0,
             is_demo_mode=False,
@@ -117,7 +117,7 @@ async def test_autonomous_provider_failover(sample_evidence):
 
     # Verify fallback was successfully engaged and completed
     mock_fallback.analyze_content.assert_awaited_once()
-    assert response.provider == "openai"
+    assert response.provider == "groq"
     assert response.retry_count == 1
     assert len(response.findings) == 1
     assert response.findings[0].severity == FindingSeverity.CRITICAL
@@ -138,8 +138,8 @@ async def test_both_providers_fail_raises_controlled_error(sample_evidence):
 
     mock_fallback = MagicMock(spec=BaseAIProvider)
     mock_fallback.is_configured.return_value = True
-    mock_fallback.provider_name = "openai"
-    mock_fallback.model_name = "gpt-4o-mini"
+    mock_fallback.provider_name = "groq"
+    mock_fallback.model_name = "llama-3.3-70b-versatile"
     mock_fallback.analyze_content = AsyncMock(side_effect=RuntimeError("Secondary Rate Limit Exceeded (429)"))
 
     manager.primary = mock_primary
@@ -153,4 +153,4 @@ async def test_both_providers_fail_raises_controlled_error(sample_evidence):
             evidence=sample_evidence,
         )
 
-    assert "Both primary (gemini) and fallback (openai) providers failed" in str(exc_info.value)
+    assert "Both primary (gemini) and fallback (groq) providers failed" in str(exc_info.value)

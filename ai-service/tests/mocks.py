@@ -26,6 +26,16 @@ class MockProvider(BaseAIProvider):
             "error": None
         }
 
+    async def test_generation(self, timeout_seconds: float = 10.0) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "latency_ms": 15,
+            "model": self.model_name,
+            "sample_output": "OPERATIONAL",
+            "error": None,
+            "error_category": None
+        }
+
     async def analyze_content(
         self,
         content_id: str,

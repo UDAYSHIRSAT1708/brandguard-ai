@@ -62,6 +62,10 @@ export class AuthService {
         refreshTokenVersion: 1,
         active: true,
       });
+
+      // Bind initial administrator as organization owner
+      org.ownerId = user._id;
+      await org.save();
     } catch (createErr) {
       // Compensating action: cleanup created organization if user creation fails
       console.error(`[AUTH] Registration rollback: Cleaning up org '${org._id}' due to user creation failure.`);
@@ -70,7 +74,7 @@ export class AuthService {
     }
 
     // 6. Generate JWT access and refresh tokens
-    const token = this.generateToken(user);
+    const token = this.generateToken(user, true);
     const refreshToken = this.generateRefreshToken(user);
     console.log(`[AUTH] Registration successful: Org '${org.name}' (${org.slug}), Admin User: '${redactEmail(user.email)}' [${user.role}]`);
 
@@ -190,7 +194,8 @@ export class AuthService {
       throw err;
     }
 
-    const token = this.generateToken(user);
+    const isOwner = Boolean(user.role === 'owner' || (org.ownerId && org.ownerId.toString() === user._id.toString()));
+    const token = this.generateToken(user, isOwner);
     const refreshToken = this.generateRefreshToken(user);
     console.log(`[AUTH] Login successful: User '${redactEmail(user.email)}' [${user.role}] in Org '${org.name}' (${org.slug})`);
 
@@ -205,13 +210,15 @@ export class AuthService {
     return { user, org, token, refreshToken };
   }
 
-  static generateToken(user: IUser): string {
+  static generateToken(user: IUser, isOwner?: boolean): string {
     return jwt.sign(
       {
         userId: user._id.toString(),
         organisationId: user.organisationId.toString(),
         role: user.role,
         email: user.email,
+        permissions: user.permissions || [],
+        isOwner: Boolean(isOwner || user.role === 'owner'),
       },
       env.JWT_SECRET,
       { expiresIn: (env.JWT_EXPIRES_IN || '24h') as any }
@@ -286,7 +293,8 @@ export class AuthService {
     );
 
     if (rotatedUser) {
-      const newToken = this.generateToken(rotatedUser);
+      const isOwner = Boolean(rotatedUser.role === 'owner' || (org.ownerId && org.ownerId.toString() === rotatedUser._id.toString()));
+      const newToken = this.generateToken(rotatedUser, isOwner);
       const newRefreshToken = this.generateRefreshToken(rotatedUser);
       return { token: newToken, refreshToken: newRefreshToken, user: rotatedUser, org };
     }
@@ -302,7 +310,8 @@ export class AuthService {
       console.log(
         `[AUTH] Concurrent refresh flight window match for user '${redactEmail(reloadedUser.email)}' (re-issuing active version ${reloadedUser.refreshTokenVersion}).`
       );
-      const synchronizedToken = this.generateToken(reloadedUser);
+      const isOwner = Boolean(reloadedUser.role === 'owner' || (org.ownerId && org.ownerId.toString() === reloadedUser._id.toString()));
+      const synchronizedToken = this.generateToken(reloadedUser, isOwner);
       const synchronizedRefreshToken = this.generateRefreshToken(reloadedUser);
       return {
         token: synchronizedToken,
